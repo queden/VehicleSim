@@ -53,12 +53,15 @@ mutable struct RoadSegment
     children::Vector{Int}
 end
 
-function get_segments(map::Dict{Int, RoadSegment}, pt::SVector{3, Float64})
+"""
+Get the segments that point is in 
+"""
+function get_segments(map::Dict{Int, RoadSegment}, point::SVector{3, Float64})
 
     segments = Dict{Int, RoadSegment}()
 
     for (id, seg) in map
-        if inside_segment(pt, seg)
+        if inside_segment(point, seg)
             segments[id] = seg
         end
     end
@@ -66,9 +69,10 @@ function get_segments(map::Dict{Int, RoadSegment}, pt::SVector{3, Float64})
     segments
 end
 
-using LazySets, Polyhedra
-
-function inside_segment(x, seg; lane_width=10.0)
+"""
+Check if point is in the segment RoadSegment
+"""
+function inside_segment(point::SVector{3, Float64}, seg::RoadSegment; lane_width=10.0)
 
     # check if straight segment
     if isapprox(seg.lane_boundaries[1].curvature, 0.0; atol=1e-6) 
@@ -82,7 +86,7 @@ function inside_segment(x, seg; lane_width=10.0)
         # use LazySets.jl to create a polyhedra of the points
         P = VPolytope(convex_hull(pts))
         
-        return x[1:2] ∈ P # poly
+        return point[1:2] ∈ P # poly
     else
         # todo curves
         inside_rad = -1
@@ -110,7 +114,7 @@ function inside_segment(x, seg; lane_width=10.0)
             center = pt_b - normalize(pt_d - pt_b) * inside_rad
         end    
 
-        inRange = inside_rad <= norm(x[1:2] - center) <= outside_rad
+        inRange = inside_rad <= norm(point[1:2] - center) <= outside_rad
 
         if (inRange)
             # calculate angle between center and x
@@ -127,7 +131,7 @@ function inside_segment(x, seg; lane_width=10.0)
                 finalAngle = mod(180/π * atan(pt_d[2] - center[2], pt_d[1] - center[1]) - 1e-6, 360)
             end
 
-            curAngle = mod(180/π * atan(x[2] - center[2], x[1] - center[1]), 360)
+            curAngle = mod(180/π * atan(point[2] - center[2], point[1] - center[1]), 360)
 
             return startingAngle <= curAngle <= finalAngle
         end

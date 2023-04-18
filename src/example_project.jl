@@ -53,6 +53,8 @@ function perception(cam_meas_channel, localization_state_channel, perception_sta
     end
 end
 
+using Rotations
+
 function decision_making(localization_state_channel, 
         perception_state_channel, 
         gt_channel, # for testing
@@ -61,9 +63,77 @@ function decision_making(localization_state_channel,
         socket)
     # do some setup
 
+    @info "Creating callback gen"
+    callbacks = nothing
+
+    try
+        callbacks = create_callback_generator(max_vel=5.0)
+    catch e
+        @info "Error encountered: $e"
+        return
+    end
+
+    @info "Callback gen created"
+
     while true
 
-        latest_gt = fetch(gt_channel)
+        sleep(1.0)
+
+        try
+            latest_gt = fetch(gt_channel)
+        
+            pos = latest_gt.position
+
+            @info "Position is $pos"
+
+            seg = get_segments(map, pos)
+
+            #trajectory = generate_trajectory(ego, V2, V3, track_radius, lane_width, track_center, callbacks, traj_length, timestep)
+
+            # import atan2
+
+
+            # quaternion to angle
+            quaternion = latest_gt.orientation
+            
+            # Extract the rotation angles from the rotation matrix
+            angles = eulerAngles(latest_gt.orientation)
+            
+            # The angles variable contains the rotation angles in radians
+
+            # quaternion to angle in xy plane
+            θ = atan(2*(quaternion[1]*quaternion[4] + quaternion[2]*quaternion[3]), 1 - 2*(quaternion[3]^2 + quaternion[4]^2))
+
+            θ = angles[1]
+
+            @info "Angle is $angles"
+
+            state = [pos[0], pos[1], latest_gt.velocity, θ]
+
+            @info "Generating trajectory"
+            trajectory = generate_trajectory(state, callbacks)
+
+        catch e
+            @info "Error encountered: $e"
+            break
+        end
+
+    
+        # if seg.id != target_road_segment_id
+        #     # we are not on the target segment, so we need to navigate to it
+        #     # this is a simple example, so we will just go to the center of the segment
+        #     # and then we will be on the target segment
+        #     target_pos = seg.center
+        #     target_vel = 10
+        #     cmd = VehicleCommand(steering_angle, target_vel, true)
+        #     serialize(socket, cmd)
+        #     continue
+        # end
+
+        # we are on the target segment, so we need to navigate to the next segment
+        # this is a simple example, so we will just go to the center of the segment
+        # and then we will be on the target segment
+
 
         # latest_perception_state = fetch(perception_state_channel)
 
@@ -73,10 +143,32 @@ function decision_making(localization_state_channel,
 
         # figure out what to do ... setup motion planning problem etc
         steering_angle = 0.0
-        target_vel = 10
+        target_vel = 0
         cmd = VehicleCommand(steering_angle, target_vel, true)
         serialize(socket, cmd)
+
     end
+end
+
+function ToEulerAngles(q::SVector{4, Float64} = SVector(1.0, 0.0, 0.0, 0.0))
+    SVector{3, Float64} angles
+
+    # roll (x-axis rotation)
+    sinr_cosp = 2 * (q.w * q.x + q.y * q.z)
+    cosr_cosp = 1 - 2 * (q.x * q.x + q.y * q.y)
+    angles.roll = std::atan(sinr_cosp, cosr_cosp)
+
+    # pitch (y-axis rotation)
+    sinp = std::sqrt(1 + 2 * (q.w * q.y - q.x * q.z))
+    cosp = std::sqrt(1 - 2 * (q.w * q.y - q.x * q.z))
+    angles.pitch = 2 * std::atan(sinp, cosp) - M_PI / 2
+
+    # yaw (z-axis rotation)
+    siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    angles.yaw = std::atan(siny_cosp, cosy_cosp)
+
+    return angles
 end
 
 function isfull(ch::Channel)
@@ -146,5 +238,6 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
     # @async localize(gps_channel, imu_channel, localization_state_channel)
     # @async perception(cam_channel, localization_state_channel, perception_state_channel)
     # @async decision_making(localization_state_channel, perception_state_channel, gt_state_channel,  map, socket)
-    @async decision_making(localization_state_channel, nothing, gt_channel,  map, socket)
+    #@async
+    decision_making(localization_state_channel, nothing, gt_channel,  map_segments, socket)
 end
