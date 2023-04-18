@@ -117,8 +117,8 @@ function keyboard_client(host::IPAddr=IPv4(0), port=4444; v_step = 1.0, s_step =
         elseif key == 'v'
             # print segment
             @info "Current pos: $current_pos"
-            seg = get_segment(map_segments, current_pos)
-            @info "Segment id: $seg"
+            seg = get_segments(map_segments, current_pos)
+            @info "Current segments: $(keys(seg))"
 
 
         end
