@@ -86,28 +86,28 @@ function create_callback_generator(; max_vel=10.0, trajectory_length=10, R = Dia
     expression = Val{false}
 
     full_cost_fn = let
-        cost_fn = Symbolics.build_function(cost_val, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc]; expression)
-        (Z, X¹, X², X³, r¹, r², r³, tr, lw, tc) -> cost_fn([Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc])
+        cost_fn = Symbolics.build_function(cost_val, [Z]; expression)
+        (Z) -> cost_fn([Z])
     end
 
     full_cost_grad_fn = let
-        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc]; expression)[2]
-        (grad, Z, X¹, X², X³, r¹, r², r³, tr, lw, tc) -> cost_grad_fn!(grad, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc])
+        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z]; expression)[2]
+        (grad, Z) -> cost_grad_fn!(grad, [Z])
     end
 
     full_constraint_fn = let
-        constraint_fn! = Symbolics.build_function(constraints_val, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc]; expression)[2]
-        (cons, Z, X¹, X², X³, r¹, r², r³, tr, lw, tc) -> constraint_fn!(cons, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc])
+        constraint_fn! = Symbolics.build_function(constraints_val, [Z]; expression)[2]
+        (cons, Z) -> constraint_fn!(cons, [Z])
     end
 
     full_constraint_jac_vals_fn = let
-        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc]; expression)[2]
-        (vals, Z, X¹, X², X³, r¹, r², r³, tr, lw, tc) -> constraint_jac_vals_fn!(vals, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc])
+        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z]; expression)[2]
+        (vals, Z) -> constraint_jac_vals_fn!(vals, [Z])
     end
     
     full_hess_vals_fn = let
-        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc; λ; cost_scaling]; expression)[2]
-        (vals, Z, X¹, X², X³, r¹, r², r³, tr, lw, tc, λ, cost_scaling) -> hess_vals_fn!(vals, [Z; X¹; X²; X³; r¹; r²; r³; tr; lw; tc; λ; cost_scaling])
+        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z]; expression)[2]
+        (vals, Z) -> hess_vals_fn!(vals, [Z])
     end
 
     full_constraint_jac_triplet = (; jac_rows, jac_cols, full_constraint_jac_vals_fn)
@@ -134,6 +134,11 @@ function decompose_trajectory(z)
     return states, controls
 end
 
+function compose_trajectory(states, controls)
+    K = length(states)
+    z = [reduce(vcat, controls); reduce(vcat, states)]
+end
+
 """
 The physics model used for motion planning purposes.
 Returns X[k] when inputs are X[k-1] and U[k]. 
@@ -144,6 +149,9 @@ function evolve_state(X, U, Δ)
     θ = X[4] + Δ * U[2]
     X + Δ * [V*cos(θ), V*sin(θ), U[1], U[2]]
 end
+
+# pos1 pos2 velo angle 
+
 
 """
 Cost at each stage of the plan
@@ -221,6 +229,8 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 10)
     states = repeat([starting_state,], trajectory_length)
     zinit = compose_trajectory(states, controls)
     prob.x = zinit
+
+    @info "Solving with IPOPT"
 
     Ipopt.AddIpoptIntOption(prob, "print_level", 1)
     status = Ipopt.IpoptSolve(prob)
