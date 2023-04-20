@@ -1,3 +1,5 @@
+using AStarSearch
+
 struct VehicleCommand
     steering_angle::Float64
     velocity::Float64
@@ -10,6 +12,20 @@ function get_c()
     c = read(stdin, Char)
     ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid},Int32), stdin.handle, false)
     c
+end
+
+# find path from current pos to target segment using A*
+function find_path(curr_pos::Int, target_segment::Int, map=training_map())
+    # find segment with curr_pos
+    neighbors = seg -> map[seg].children
+    path = astar(neighbors, curr_pos, target_segment)
+    # if successful, return path
+    if path.status == :success
+        return path.path
+    else
+        return []
+    end
+    
 end
 
 function keyboard_client(host::IPAddr=IPv4(0), port=4444; v_step = 1.0, s_step = π/10)
@@ -31,6 +47,7 @@ function keyboard_client(host::IPAddr=IPv4(0), port=4444; v_step = 1.0, s_step =
     last_target = -1
     current_id = -1
     current_pos = SVector(0.0, 0.0, 0.0)
+    last_pos = SVector(0.0, 0.0, 0.0)
 
     @async try 
         while isopen(socket)
@@ -60,6 +77,22 @@ function keyboard_client(host::IPAddr=IPv4(0), port=4444; v_step = 1.0, s_step =
                         println("Vehicle id: $current_id")
                     end
                     current_pos = meas.position
+
+                    # get current segment id from pos
+                    if current_pos != last_pos
+                        println("Current pos: $current_pos")
+
+                        curr_seg = get_segments(map_segments, current_pos)
+                        println("Current segment: $(first(keys(curr_seg)))")
+
+                        curr_seg_id = first(keys(curr_seg))
+                        
+                        # find path from curr_seg to target_seg
+                        println("Trying to find path: ")
+                        path = find_path(curr_seg_id, target_map_segment)
+                        println("Path: $path")
+                        last_pos = current_pos
+                    end
     
                     # scan map for segment with pos
                     # for i in 1:length(map_segments)
@@ -117,8 +150,8 @@ function keyboard_client(host::IPAddr=IPv4(0), port=4444; v_step = 1.0, s_step =
         elseif key == 'v'
             # print segment
             @info "Current pos: $current_pos"
-            seg = get_segment(map_segments, current_pos)
-            @info "Segment id: $seg"
+            seg = get_segments(map_segments, current_pos)
+            @info "Current segments: $(keys(seg))"
 
 
         end
