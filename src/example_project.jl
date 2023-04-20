@@ -139,9 +139,15 @@ function decision_making(localization_state_channel,
         #print("Pos: " + str(latest_gt.position) + "\n")
 
         # figure out what to do ... setup motion planning problem etc
-        steering_angle, target_vel = run_stuff()
-        cmd = VehicleCommand(steering_angle, target_vel, true)
-        serialize(socket, cmd)
+        _, controls, __ = run_stuff()
+        for control in controls
+            target_angle, target_vel = control
+            # eventually add buffer for commands 
+            cmd = VehicleCommand(target_angle, target_vel, true)
+            serialize(socket, cmd)
+        end
+        # cmd = VehicleCommand(steering_angle, target_vel, true)
+        # serialize(socket, cmd)
 
     end
 end
