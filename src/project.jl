@@ -11,7 +11,7 @@ end
 struct FullVehicleState
     position::SVector{3, Float64}
     velocity::SVector{3, Float64}
-    orientation::SVector{3, Float64}
+    orientation::SVector{4, Float64}
     angular_vel::SVector{3, Float64}
 end
 
@@ -20,10 +20,6 @@ struct MyLocalizationType
     x::FullVehicleState
 end
 
-struct MyPerceptionType
-    last_update::Float64
-    x::Vector{SimpleVehicleState}
-end
 
 # camera stream is continuous, but localization is one time
 # so you have to extrapolate the localization state to the 
@@ -66,95 +62,19 @@ function localize(gps_channel, imu_channel, localization_state_channel)
     end 
 end
 
-
-function f(x, u, ω, Δ)
-    [
-        x[1] + Δ * cos(
-    ]
-
-"""
-Measurement func -> map real state to measurement
-
-Camera projection function? Yes
-"""
-function h(x)
-
-end
-
-"""
-The process model 
-P(x | x₋₁, u)
-
-Do we actually know the u's?
-
-The measurement model
-
-
-"""
-function perception(cam_meas_channel, localization_state_channel, perception_state_channel)
-    # set up stuff
+function fake_localize(gt_channel, localization_state_channel)
     while true
-        fresh_cam_meas = []
-        while isready(cam_meas_channel)
-            meas = take!(cam_meas_channel)
-            push!(fresh_cam_meas, meas)
+        sleep(0.001)
+        freshest = fetch(perception_state_channel)
+
+        localization_state = FullVehicleState(freshest.position, freshest.velocity, freshest.orientation, freshest.angular_velocity)
+
+        if isready(localization_state_channel)
+            take!(localization_state_channel)
         end
-
-        latest_localization_state = fetch(localization_state_channel)
-
-        # TODO: Need to understand how the camera transformation works
-        #       Ah, this is using in h functions
-
-        x = latest_localization_state.x
-
-        # NO u OR m!
-        # uₖ = u_constant
-        # mₖ = uₖ + sqrt(proc_cov) * randn(rng, 2) # Noisy IMU measurement.
-        Δ = meas_freq + meas_jitter * (2*rand(rng) - 1)
-        ω_true = sqrt(dist_cov) * randn(rng, 2)
-        xₖ = f(x_prev, uₖ, ω_true, Δ)
-        x_prev = xₖ
-        # u_prev = uₖ
-        zₖ = h(xₖ) + sqrt(meas_var) * randn(rng, 2)
-        
-        # TODO: iterate through the bounding boxes -- do we do an update for each 
-        #       bounding boxes? 
-
-        # process bounding boxes / run ekf / do what you think is good
-
-        # TODO: Define f, μ, m, and calc jacobians
-
-        # TODO: Is F rigid body dynamics, or function from lecture?
-
-        # A = jac_fx(μ, mₖ, zeros(2), Δ)
-        # B = jac_fu(μ, mₖ, zeros(2), Δ)
-        # L = jac_fω(μ, mₖ, zeros(2), Δ) 
-
-        # μ̂ = f(μ, mₖ, zeros(2), Δ)
-        # Σ̂ = A*Σ*A' + B*proc_cov*B' + L*dist_cov*L'
-        # 
-        # C = jac_hx(μ̂)
-        # d = h(μ̂) - C*μ̂
-
-        # Σ = inv(inv(Σ̂) + C'*inv(meas_var)*C)
-        # μ = Σ * (inv(Σ̂) * μ̂ + C'*inv(meas_var) * (zₖ - d))
-
-        # TODO: How do we reconcile bounding boxes that reference the same 
-        #       car from two cameras? 
-        #       When we push the vehicle states, do we just see if there are  
-        #       vehicles that seem to have the same dimensions and position?
-        #       Or do we figure out which bounding boxes refer to the same car
-        #       at the beginning and then include them in the same state?
-
-        # TODO: How do we track when cars enter and leave
-
-        perception_state = MyPerceptionType(0,0.0)
-        if isready(perception_state_channel)
-            take!(perception_state_channel)
-        end
-        put!(perception_state_channel, perception_state)
+        put!(localization_state_channel, localization_state)
     end
-end
+end 
 
 function decision_making(localization_state_channel, 
         perception_state_channel, 
@@ -174,14 +94,19 @@ function decision_making(localization_state_channel,
     end
 end
 
-function isfull(ch:Channel)
+function isfull(ch::Channel)
     length(ch.data) ≥ ch.sz_max
 end
 
-
 function my_client(host::IPAddr=IPv4(0), port=4444)
     socket = Sockets.connect(host, port)
-    map_segments = training_map()
+    @info socket
+    @info "hello"
+    msg = deserialize(socket) # Visualization info
+    @info "bye"
+    @info msg
+    # map_segments = training_map()
+    (; chevy_base) = load_mechanism()
 
     gps_channel = Channel{GPSMeasurement}(32)
     imu_channel = Channel{IMUMeasurement}(32)
@@ -194,11 +119,28 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
     target_map_segment = 0 # (not a valid segment, will be overwritten by message)
     ego_vehicle_id = 0 # (not a valid id, will be overwritten by message. This is used for discerning ground-truth messages)
 
-    @async while true
+    errormonitor(@async while isopen(socket)
+        sleep(0.001)
+        local measurement_msg
+        received = false
+        while true
+            sleep(0.001)
+            @async eof(socket)
+            if bytesavailable(socket) > 0
+                measurement_msg = deserialize(socket)
+                received = true
+            else
+                break
+            end
+        end
+
+        !received && continue
         measurement_msg = deserialize(socket)
-        target_map_segment = meas.target_segment
-        ego_vehicle_id = meas.vehicle_id
+        target_map_segment = measurement_msg.target_segment
+        ego_vehicle_id = measurement_msg.vehicle_id
+
         for meas in measurement_msg.measurements
+            sleep(0.001)
             if meas isa GPSMeasurement
                 !isfull(gps_channel) && put!(gps_channel, meas)
             elseif meas isa IMUMeasurement
@@ -209,9 +151,66 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
                 !isfull(gt_channel) && put!(gt_channel, meas)
             end
         end
-    end
+    end)
 
-    @async localize(gps_channel, imu_channel, localization_state_channel)
-    @async perception(cam_channel, localization_state_channel, perception_state_channel)
-    @async decision_making(localization_state_channel, perception_state_channel, map, socket)
+    # @async localize(gps_channel, imu_channel, localization_state_channel)
+    @async fake_localize(gt_channel, localization_state)
+    @async perception(cam_channel, gt_channel, perception_state_channel) # localization_state_channel, perception_state_channel)
+    @async test_perception(gt_channel, perception_state_channel, ego_vehicle_id)
+    # @async decision_making(localization_state_channel, perception_state_channel, target_map_segment, map, socket)
+
+    @info "Press 'q' at any time to terminate vehicle."
+    while isopen(socket)
+        sleep(0.001)
+        key = get_c()
+        if key == 'q'
+            # terminate vehicle
+            target_velocity = 0.0
+            steering_angle = 0.0
+            @info "Terminating Keyboard Client."
+            cmd = VehicleCommand(steering_angle, target_velocity, false)
+            serialize(socket, cmd)
+        end
+    end
+end
+
+function test_perception(gt_channel, perception_state_channel, ego_id)
+    t = time()
+    while true
+        
+        @info "testing perception"
+
+        sleep(0.001)
+        tn = time()
+        freshest_gt_message = nothing
+        latest_time = -Inf
+
+        while isready!(gt_channel)
+            sleep(0.001)
+            @info "getting groundtruth"
+            gt = take!(gt_channel)
+            if gt.vehicle_id != ego_id && gt.time > latest_time
+                freshest_gt_message = gt
+                latest_time = gt.time
+            end
+        end
+
+        @info "gt"
+        @info freshest_gt_message 
+
+        @info "perception"
+
+        perception_state = fetch(perception_state_channel)
+
+        @info perception_state 
+
+        if tn - t > 1.0
+            t = tn
+            println(perception_state.p1 - freshest_gt_message.position[1]) 
+            println(perception_state.p2 - freshest_gt_message.position[2]) 
+            println(perception_state.θ - extract_yaw_from_quaternion(freshest_gt_message.orientation))
+            println(perception_state.v - freshest_gt_message.velocity[1])
+            # TODO: how to compare vel 
+        end
+    end
 end
