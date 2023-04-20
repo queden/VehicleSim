@@ -9,44 +9,6 @@ using StaticArrays
 
 include("map.jl")
 
-function run1()
-    expression = Val{false}
-    
-    # states, controls = decompose_trajectory(Z)
-    # cost_val = sum(stage_cost(x, u) for (x,u) in zip(states, controls))
-
-    map = training_map()
-
-    output = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    z = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-    X¹, y, Z = let
-        ( @variables(X¹[1:4], y[1:2], Z[1:2*trajectory_length]) ) .|> Symbolics.scalarize
-    end
-
-    cost_val = sum(Z[i] * Z[i] for i in 1:2*trajectory_length)
-
-    cost_grad = Symbolics.gradient(cost_val, Z)
-
-    # @info "cost val is $cost_val"
-    # @info "cost grad is $cost_grad len z is $(length(Z))"
-
-    res = [y[1], y[2]]
-    func = Symbolics.build_function(res, [y;]; expression)[1]
-    func2 = Symbolics.build_function(cost_grad, [Z;]; expression)[1]
-
-    
-
-    @infiltrate
-
-    output = cost_grad_fn!(grad, z)
-
-    # output = full_cost_grad_fn(grad, z)
-
-    @info "output is $output"
-
-end
-
 function run_stuff()
 
     map = training_map()
@@ -69,14 +31,12 @@ function run_stuff()
 
     @info "init state"
 
-    
-
     state = [0, 0, 0, 0, 0, 32]
 
     # get middle pos of segment
     starting = [0, 0]
     divisor = 0
-    for lb in map.all_segs[32].lane_boundaries
+    for lb in map[32].lane_boundaries
         starting += lb.pt_a[1:2]
         starting += lb.pt_b[1:2]
         divisor += 2
@@ -89,6 +49,10 @@ function run_stuff()
     trajectory = generate_trajectory(state, callbacks)
 
 end
+
+using SymPy
+using Polynomials
+
 
 """
 Create functions which accepts X¹, X², X³, r¹, r², r³, a¹, b¹, a², b², as input, and each return
@@ -106,7 +70,7 @@ The purpose of this function is to construct functions which can quickly turn
 updated world information into planning problems that IPOPT can solve.
 """
 # trajectory_length=40, timestep=0.2, R = Diagonal([0.1, 0.5]), 
-function create_callback_generator(; map=training_map(), max_vel=10.0, trajectory_length=15, R = Diagonal([0.1, 0.5]), timestep=0.2)
+function create_callback_generator(; map=training_map(), max_vel=10.0, trajectory_length=2, R = Diagonal([0.1, 0.5]), timestep=0.2)
 
     # Define symbolic variables for all inputs, as well as trajectory
    
@@ -117,7 +81,7 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     # @variables x::Int y::Int
 
     X¹, Z = let
-        ( @variables(X¹[1:6], Z[1:8*trajectory_length]) ) .|> Symbolics.scalarize
+        ( @variables(X¹[1:5], Z[1:7*trajectory_length]) ) .|> Symbolics.scalarize
     end
 
     @info "Variable init X is $X¹ and Z is $Z"
@@ -125,6 +89,7 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     states, controls = decompose_trajectory(Z)
     
     all_states = [[X¹,]; states]
+
     # vehicle_2_prediction = constant_velocity_prediction(X², trajectory_length, timestep, tc)
     # vehicle_3_prediction = constant_velocity_prediction(X³, trajectory_length, timestep, tc)
    
@@ -136,36 +101,75 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     constraints_lb = Float64[]
     constraints_ub = Float64[]
 
+
+    # we want to look at current segment and next segment and generate a polynomial as an upper and lower bound for our position 
+
+
+    # use lane boundaries of the starting segment fuck it
+    starting_seg_id = 32 # nothing #get_segments(map, [X¹[1:2]; 0])[0]
+    next_seg_id = 30 # nothing
+
+    starting_seg = map[starting_seg_id]
+    next_seg = map[next_seg_id]
+
+    # lower lane boundary
+    pt_a = starting_seg.lane_boundaries[1].pt_a
+    pt_b = starting_seg.lane_boundaries[1].pt_b
+    pt_c = next_seg.lane_boundaries[1].pt_b
+
+    lowerXs = [pt_a[1] - .01, pt_b[1], pt_c[1] + .01]
+    lowerYs = [pt_a[2], pt_b[2], pt_c[2]]
+
+    # upper lane boundary
+    pt_a = starting_seg.lane_boundaries[2].pt_a
+    pt_b = starting_seg.lane_boundaries[2].pt_b
+    pt_c = next_seg.lane_boundaries[2].pt_b
+
+    upperXs = [pt_a[1] - .01, pt_b[1], pt_c[1] + .01]
+    upperYs = [pt_a[2], pt_b[2], pt_c[2]]
+
+    lowerLane = fit(lowerXs, lowerYs, 2)
+    upperLane = fit(upperXs, upperYs, 2)
+
+    @info "Lower lane is $lowerLane"
+    @info "Upper lane is $upperLane"
+
     for k in 1:trajectory_length
         # trajectory must obey physics
-        append!(constraints_val, all_states[k+1] .- evolve_state(map, all_states[k], controls[k], timestep))
-        append!(constraints_lb, zeros(5)) # fuck it maybe only mostly follow physics?
-        append!(constraints_ub, zeros(5))
+
+        # evolv = all_states[k+1] .- evolve_state(all_states[k], controls[k], timestep)
+
+        # @info "Evolv is $evolv"
+
+        # append!(constraints_val, evolv)
+        # append!(constraints_lb, zeros(5)) # fuck it maybe only mostly follow physics?
+        # append!(constraints_ub, zeros(5))
 
         # lane boundaries... stay in parent or a child's
-        append!(constraints_val, all_states[k+1][5] - 0.5)
 
         # trajectory must obey velocity constraints
         # maybe being near center line is actually a score function sorta thing?
         # also is it better if conditions are differentiable? 
 
-        curr_seg_id = all_states[k+1][5]
+        # stay within lane polynomials
 
-        pos = all_states[k+1][1:2]
+        # pos = states[k][1:2]
 
-        withinLaneBoundaries = Int(inside_segment_or_child(pos, curr_seg_id)) # 1 if true, 0 if false
+        # append!(constraints_val, pos[2] - lowerLane(pos[1]))
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, Inf) 
 
-        append!(constraints_val, withinLaneBoundaries)
-        append!(constraints_lb, 1)
-        append!(constraints_ub, 1) # max velo
+        # append!(constraints_val, upperLane(pos[1]) - pos[2])
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, Inf) 
         
         append!(constraints_val, controls[k][1])
-        append!(constraints_lb, 0)
+        append!(constraints_lb, 2.0)
         append!(constraints_ub, 5.0) # max velo
 
-        append!(constraints_val, controls[k][2])
-        append!(constraints_lb, 0)
-        append!(constraints_ub, 0.5) # max steering angle
+        # append!(constraints_val, controls[k][2])
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, 0.5) # max steering angle
     end
 
     constraints_jac = Symbolics.sparsejacobian(constraints_val, Z)
@@ -184,31 +188,31 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     expression = Val{false}
 
     full_cost_fn = let
-        cost_fn = Symbolics.build_function(cost_val, [Z;]; expression)
-        (Z) -> cost_fn([Z;])
+        cost_fn = Symbolics.build_function(cost_val, [Z; X¹]; expression)
+        (Z, X¹) -> cost_fn([Z; X¹])
     end
 
     full_cost_grad_fn = let
-        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z;]; expression)[2]
+        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z; X¹]; expression)[2]
 
-        (grad, Z) -> begin
-            cost_grad_fn!(grad, [Z;])
+        (grad, Z, X¹) -> begin
+            cost_grad_fn!(grad, [Z; X¹])
         end
     end
 
     full_constraint_fn = let
-        constraint_fn! = Symbolics.build_function(constraints_val, [Z;]; expression)[2]
-        (cons, Z) -> constraint_fn!(cons, [Z;])
+        constraint_fn! = Symbolics.build_function(constraints_val, [Z; X¹]; expression)[2]
+        (cons, Z, X¹) -> constraint_fn!(cons, [Z; X¹])
     end
 
     full_constraint_jac_vals_fn = let
-        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z;]; expression)[2]
-        (vals, Z) -> constraint_jac_vals_fn!(vals, [Z;])
+        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z; X¹]; expression)[2]
+        (vals, Z, X¹) -> constraint_jac_vals_fn!(vals, [Z; X¹])
     end
     
     full_hess_vals_fn = let
-        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z;cost_scaling;λ]; expression)[2]
-        (vals, Z, cost_scaling, λ) -> hess_vals_fn!(vals, [Z;cost_scaling;λ])
+        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z;X¹;cost_scaling;λ]; expression)[2]
+        (vals, Z, X¹, cost_scaling, λ) -> hess_vals_fn!(vals, [Z;X¹;cost_scaling;λ])
     end
 
     full_constraint_jac_triplet = (; jac_rows, jac_cols, full_constraint_jac_vals_fn)
@@ -229,9 +233,9 @@ Return states = [X[1], X[2],..., X[K]], controls = [U[1],...,U[K]]
 where K = trajectory_length
 """
 function decompose_trajectory(z)
-    K = Int(length(z) / 6)
+    K = Int(length(z) / 7)
     controls = [@view(z[(k-1)*2+1:k*2]) for k = 1:K]
-    states = [@view(z[2K+(k-1)*4+1:2K+k*4]) for k = 1:K]
+    states = [@view(z[2K+(k-1)*5+1:2K+k*5]) for k = 1:K]
     return states, controls
 end
 
@@ -245,49 +249,21 @@ The physics model used for motion planning purposes.
 Returns X[k] when inputs are X[k-1] and U[k]. 
 Uses a slightly different vehicle model than presented in class for technical reasons.
 """
-function evolve_state(map, X, U, Δ)
+function evolve_state(X, U, Δ)
 
     # X is state [x, y, yaw, velocity, angular velocity, segment]
     # U is controls [target velocity, target steering angle]
 
-    
     # for now assume instant changing
+
+    @info "X is $X and U is $U"
 
     V = U[1] 
     θ = X[3] + U[2] * Δ
-    next = X + Δ * [V*cos(θ), V*sin(θ), U[2] * Δ, U[1], U[2], 0]
+    next = X + Δ * [V*cos(θ), V*sin(θ), U[2] * Δ, U[1], U[2]]
 
-    pos = SVector{2}(next[1], next[2])
-    seg_id = next[5]
-
-    ## TODO: Overlapping segments
-
-    # we first check if it is in same segment. then children. then all them
-    if (inside_segment(map, pos, seg_id) == false)
-        
-        # in diff segment
-
-        for c in map.segments[seg_id].children
-            if (inside_segment(map, pos, c) == true)
-                next[5] = c.id
-                return next
-            end
-        end
-
-        segments = get_segments(map, [pos[1], pos[2], 0])
-        if (length(segments) >= 1)
-            next[5] = segments[1].id
-            return next
-        end
-
-        # we lost as hell but pretend same segment as last time
-    end
-
-    return next
+    next
 end
-
-# pos1 pos2 velo angle 
-
 
 """
 Cost at each stage of the plan
@@ -301,8 +277,8 @@ function stage_cost(X, U)
 end
 
 # Don't call this function until we know where we are
-function generate_trajectory(starting_state, callbacks; trajectory_length = 15)
-    # X1 = ego.state
+function generate_trajectory(starting_state, callbacks; trajectory_length = 2)
+    X1 = starting_state
     # X2 = V2.state
     # X3 = V3.state
     # r1 = ego.r
@@ -314,17 +290,17 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 15)
     # refine callbacks with current values of parameters / problem inputs
     wrapper_f = function(z) 
         # callbacks.full_cost_fn(z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
-        callbacks.full_cost_fn(z)
+        callbacks.full_cost_fn(z, X1)
     end
     wrapper_grad_f = function(z, grad)
         # callbacks.full_cost_grad_fn(grad, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
 
-        callbacks.full_cost_grad_fn(grad, z)
+        callbacks.full_cost_grad_fn(grad, z, X1)
     end
     wrapper_con = function(z, con)
         # callbacks.full_constraint_fn(con, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
 
-        callbacks.full_constraint_fn(con, z)
+        callbacks.full_constraint_fn(con, z, X1)
     end
     wrapper_con_jac = function(z, rows, cols, vals)
         if isnothing(vals)
@@ -332,7 +308,7 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 15)
             cols .= callbacks.full_constraint_jac_triplet.jac_cols
         else
             # callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
-            callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z)
+            callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1)
         end
         nothing
     end
@@ -342,7 +318,7 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 15)
             cols .= callbacks.full_lag_hess_triplet.hess_cols
         else
             # callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center, λ, cost_scaling)
-            callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, cost_scaling, λ)
+            callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, cost_scaling, λ)
         end
         nothing
     end
@@ -372,7 +348,8 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 15)
 
     @info "Solving with IPOPT"
 
-    Ipopt.AddIpoptIntOption(prob, "print_level", 1)
+    Ipopt.AddIpoptIntOption(prob, "print_level", 12)
+
     status = Ipopt.IpoptSolve(prob)
 
     if status == 0

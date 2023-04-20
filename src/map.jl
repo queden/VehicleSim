@@ -53,14 +53,14 @@ mutable struct RoadSegment
     children::Vector{Int}
 end
 
-function get_segments(map::Dict{Int, RoadSegment}, point::SVector{3, Float64})
+function get_segments(map::Dict{Int, RoadSegment}, point)
     return get_segments(map, point)
 end
 
 """
 Get the segments that point is in 
 """
-function get_segments(map::Dict{Int, RoadSegment}, point::SVector{3, Float64})
+function get_segments(map::Dict{Int, RoadSegment}, point)
 
     segments = Dict{Int, RoadSegment}()
 
@@ -78,12 +78,6 @@ Check if point is in the segment with seg id
 """
 function inside_segment(map::Dict{Int, RoadSegment}, point, seg_id)
 
-    @info "Checking inside seg for id $seg_id"
-
-    if !haskey(map, seg_id)
-        @info "No key for $seg_id"
-        return false
-    end
 
     seg = map[seg_id]
 
