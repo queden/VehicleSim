@@ -120,13 +120,13 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
         poly = lowerLane[1] + lowerLane[2] * pos[1] + lowerLane[3] * pos[1] * pos[1]
         poly2 = upperLane[1] + upperLane[2] * pos[1] + upperLane[3] * pos[1] * pos[1]
 
-        append!(constraints_val, pos[2] - poly) 
-        append!(constraints_lb, 0)
-        append!(constraints_ub, Inf)
+        # append!(constraints_val, pos[2] - poly) 
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, Inf)
 
-        append!(constraints_val, poly2 - pos[2])
-        append!(constraints_lb, 0)
-        append!(constraints_ub, Inf) 
+        # append!(constraints_val, poly2 - pos[2])
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, Inf) 
 
         # @info "controls $(controls[k][1])"
         
@@ -234,14 +234,16 @@ function stage_cost(X, U, target_pos)
 
     # penalize being far from target location
 
-    targDistPenalty = 0.5 * norm(X[1:2] - target_pos[1:2])^2
+    # targDistPenalty = 0.5 * norm(X[1:2] - target_pos[1:2])^2
 
-    return -2 * U[1]^2 + 0.1 * U[2]^2 - X[3] + targDistPenalty
+    return -2 * U[1]^2 + 0.1 * U[2]^2 - X[3] # + targDistPenalty
 end
 
 # Don't call this function until we know where we are
 function generate_trajectory(starting_state, path, target_id, callbacks; trajectory_length=8, map=training_map())
     X1 = starting_state
+
+    @info "STARTING STATE: $X1"
 
     target_pos = nothing
 
@@ -288,8 +290,6 @@ function generate_trajectory(starting_state, path, target_id, callbacks; traject
 
     sample = starting_seg.lane_boundaries[1].pt_b[1]
     if (lowerLane(sample) > upperLane(sample))
-        
-        @info "Swapping boundaries"
         
         # switch
         temp = lowerLane
@@ -369,15 +369,18 @@ function generate_trajectory(starting_state, path, target_id, callbacks; traject
 
     @info "Solving with IPOPT"
 
-    Ipopt.AddIpoptIntOption(prob, "print_level", 4)
+    Ipopt.AddIpoptIntOption(prob, "print_level", 1)
 
     status = Ipopt.IpoptSolve(prob)
+
+    states, controls = decompose_trajectory(prob.x)
 
     if status == 0
         @info "Ipopt found soln " * string(prob.x)
     else
         @warn "Problem not cleanly solved. IPOPT status is $(status)."
+        @info "Controls are $(controls) and states are $(states)"
     end
-    states, controls = decompose_trajectory(prob.x)
+
     (; states, controls, status)
 end

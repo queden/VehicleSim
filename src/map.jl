@@ -580,19 +580,19 @@ function training_map(; lane_width = 10.0,
     segs_S = add_straight_segments!(all_segs, segs_S, north; length=block_length, speed_limit, stop_outbound=true, stop_inbound=false)
     segs_I = add_segments!(all_segs, segs_S, north, segs_I)
     
-    # segs_N = add_pullout_segments!(all_segs, segs_T, north; length=single_shortened_block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=false)
-    # segs_N = add_curved_segments!(all_segs, segs_N, north, false; turn_curvature, speed_limit, lane_width)
-    # segs_N = add_straight_segments!(all_segs, segs_N, east; length=single_shortened_block_length, speed_limit, stop_outbound=true, stop_inbound=false)
-    # segs_N = add_T_intersection!(all_segs, segs_N, east, south; intersection_curvature, lane_width, speed_limit)
-    # segs_N2 = add_pullout_segments!(all_segs, segs_N, south; length=block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=true, stop_inbound=true, stop_outbound=true)
-    # segs_I = add_segments!(all_segs, segs_N2, south, segs_I)
+    segs_N = add_pullout_segments!(all_segs, segs_T, north; length=single_shortened_block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=false)
+    segs_N = add_curved_segments!(all_segs, segs_N, north, false; turn_curvature, speed_limit, lane_width)
+    segs_N = add_straight_segments!(all_segs, segs_N, east; length=single_shortened_block_length, speed_limit, stop_outbound=true, stop_inbound=false)
+    segs_N = add_T_intersection!(all_segs, segs_N, east, south; intersection_curvature, lane_width, speed_limit)
+    segs_N2 = add_pullout_segments!(all_segs, segs_N, south; length=block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=true, stop_inbound=true, stop_outbound=true)
+    segs_I = add_segments!(all_segs, segs_N2, south, segs_I)
 
-    # segs_E = add_straight_segments!(all_segs, segs_N, east; length=block_length, speed_limit, lane_width, stop_inbound=true, stop_outbound=false)
-    # segs_E = add_curved_segments!(all_segs, segs_E, east, false; turn_curvature, speed_limit, lane_width)
-    # segs_E = add_pullout_segments!(all_segs, segs_E, south; length=shortened_block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=false)
-    # segs_E = add_curved_segments!(all_segs, segs_E, south, false; turn_curvature, speed_limit, lane_width)
-    # segs_E = add_straight_segments!(all_segs, segs_E, west; length=block_length, speed_limit, lane_width, stop_outbound=true, stop_inbound=false)
-    # segs_I = add_segments!(all_segs, segs_E, west, segs_I)
+    segs_E = add_straight_segments!(all_segs, segs_N, east; length=block_length, speed_limit, lane_width, stop_inbound=true, stop_outbound=false)
+    segs_E = add_curved_segments!(all_segs, segs_E, east, false; turn_curvature, speed_limit, lane_width)
+    segs_E = add_pullout_segments!(all_segs, segs_E, south; length=shortened_block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=false)
+    segs_E = add_curved_segments!(all_segs, segs_E, south, false; turn_curvature, speed_limit, lane_width)
+    segs_E = add_straight_segments!(all_segs, segs_E, west; length=block_length, speed_limit, lane_width, stop_outbound=true, stop_inbound=false)
+    segs_I = add_segments!(all_segs, segs_E, west, segs_I)
 
     all_segs
 end

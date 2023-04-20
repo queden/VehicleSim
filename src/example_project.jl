@@ -101,7 +101,7 @@ function decision_making(localization_state_channel,
 
         curr_seg_id = nothing
         for seg_id in lastPath
-            if inside_segment(state[1:2], map.segments[seg_id])
+            if inside_segment(state[1:2], map[seg_id])
                 curr_seg_id = seg_id
                 break
             end
@@ -144,6 +144,8 @@ function decision_making(localization_state_channel,
 
         trajectory = generate_trajectory(state, lastPath[1:2], target_map_segment, callbacks, map=map)
 
+        sleep(2 * timestep)
+
         # could always sleep
 
         current_step = 1
@@ -153,34 +155,42 @@ function decision_making(localization_state_channel,
     alternate = 1
 
     while true
+
+        @info "loop "
         
         sleep(timestep)
 
         if (helicopterMode)
+
+            @info "Helicopter mode"
+
             alternate = -alternate
 
             cmd = VehicleCommand(10, alternate, true)
             serialize(socket, cmd)
 
-            continue
-        end
+        else
+            # No trajectory calculated yet
+            if (trajectory === nothing) 
+                @info "Waiting on trajectory..."
+            else
+                states, controls = decompose_trajectory(trajectory)
 
-        # No trajectory calculated yet
-        if (trajectory === nothing) 
-            continue
-        end
+                @info "Decomposed trajectory"
 
-        states, controls = decompose_trajectory(trajectory)
+                if length(states) >= current_step
+                    # apply the current step controls
+                    target_angle = controls[current_step][2]
+                    target_velo = states[current_step][3]
 
-        if length(states) >= current_step
-            # apply the current step controls
-            target_angle = controls[current_step][2]
-            target_velo = states[current_step][3]
+                    @info "Sending command... $target_angle, $target_velo"
 
-            cmd = VehicleCommand(target_angle, target_velo, true)
-            serialize(socket, cmd)
+                    cmd = VehicleCommand(target_angle, target_velo, true)
+                    serialize(socket, cmd)
 
-            current_step+=1
+                    current_step+=1
+                end     
+            end
         end
     end
 
