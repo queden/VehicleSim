@@ -117,28 +117,6 @@ function decision_making(localization_state_channel,
 
         trajectory = generate_trajectory(state, callbacks)
 
-        # if seg.id != target_road_segment_id
-        #     # we are not on the target segment, so we need to navigate to it
-        #     # this is a simple example, so we will just go to the center of the segment
-        #     # and then we will be on the target segment
-        #     target_pos = seg.center
-        #     target_vel = 10
-        #     cmd = VehicleCommand(steering_angle, target_vel, true)
-        #     serialize(socket, cmd)
-        #     continue
-        # end
-
-        # we are on the target segment, so we need to navigate to the next segment
-        # this is a simple example, so we will just go to the center of the segment
-        # and then we will be on the target segment
-
-        # latest_perception_state = fetch(perception_state_channel)
-
-        # latest_gt_state = fetch(gt_channel)
-
-        #print("Pos: " + str(latest_gt.position) + "\n")
-
-        # figure out what to do ... setup motion planning problem etc
         _, controls, __ = run_stuff()
         for control in controls
             target_angle, target_vel = control
@@ -176,7 +154,6 @@ end
 function isfull(ch::Channel)
     length(ch.data) ≥ ch.sz_max
 end
-
 
 function my_client(host::IPAddr=IPv4(0), port=4444)
     socket = Sockets.connect(host, port)

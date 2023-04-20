@@ -43,6 +43,41 @@ end
 using SymPy
 using Polynomials
 
+function get_points(lb::LaneBoundary) 
+
+    if (lb.curvature == 0)
+
+        pt_a = lb.pt_a
+        pt_b = lb.pt_b
+
+        mdpt = (pt_a[1:2] + pt_b[1:2]) / 2
+        q1pt = (pt_a[1:2] + mdpt) / 2
+        q3pt = (pt_b[1:2] + mdpt) / 2
+    
+        lowerXs = [pt_a[1] - .05, q1pt[1] - .025, mdpt[1], q3pt[1] + .025, pt_b[1] + .05]
+        lowerYs = [pt_a[2], q1pt[2], mdpt[2], q3pt[2], pt_b[2]]
+
+        return lowerXs, lowerYs
+    else
+        # center = nothing
+        # right = lb.curvature < 0
+        # radius = 1 / lb.curvature
+
+        # if (right)
+        #     center = lb.pt_d - normalize(pt_b - pt_d) * inside_rad
+        # else
+        #     center = lb.pt_b - normalize(pt_d - pt_b) * inside_rad
+        # end
+
+        # TODO: add more points to circle
+        pt_a = lb.pt_a
+        pt_b = lb.pt_b
+        mdpt = (pt_a + pt_b) / 2
+
+        lowerXs = [pt_a[1], mdpt[1], pt_b[1]]
+        lowerYs = [pt_a[2], mdpt[2], pt_b[2]]
+    end
+end
 
 """
 Create functions which accepts X¹, X², X³, r¹, r², r³, a¹, b¹, a², b², as input, and each return
@@ -102,28 +137,24 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     next_seg = map[next_seg_id]
 
     # lower lane boundary
-    pt_a = starting_seg.lane_boundaries[1].pt_a
-    pt_b = starting_seg.lane_boundaries[1].pt_b
-    pt_c = next_seg.lane_boundaries[1].pt_b
-
-    lowerXs = [pt_a[1] - .01, pt_b[1], pt_c[1] + .01]
-    lowerYs = [pt_a[2], pt_b[2], pt_c[2]]
+    firstXs, firstYs = get_points(starting_seg.lane_boundaries[1])
+    secondXs, secondYs = get_points(next_seg.lane_boundaries[1])
+    
+    lowerXs = [firstXs; secondXs]
+    lowerYs = [firstYs; secondYs]
 
     # upper lane boundary
-    pt_a = starting_seg.lane_boundaries[2].pt_a
-    pt_b = starting_seg.lane_boundaries[2].pt_b
-    pt_c = next_seg.lane_boundaries[2].pt_b
-
-    upperXs = [pt_a[1] - .01, pt_b[1], pt_c[1] + .01]
-    upperYs = [pt_a[2], pt_b[2], pt_c[2]]
+    firstXs, firstYs = get_points(starting_seg.lane_boundaries[length(next_seg.lane_boundaries)])
+    secondXs, secondYs = get_points(next_seg.lane_boundaries[length(next_seg.lane_boundaries)])
+    
+    upperXs = [firstXs; secondXs]
+    upperYs = [firstYs; secondYs]
 
     lowerLane = fit(lowerXs, lowerYs, 2)
     upperLane = fit(upperXs, upperYs, 2)
 
-    @info "Lanes"
-    @infiltrate
-
-    if (lowerLane(pt_b[1]) > upperLane(pt_b[1]))
+    sample = starting_seg.lane_boundaries[1].pt_b[1]
+    if (lowerLane(sample) > upperLane(sample))
         
         @info "Swapping boundaries"
         
