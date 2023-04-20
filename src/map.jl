@@ -579,9 +579,6 @@ function training_map(; lane_width = 10.0,
     segs_S = add_curved_segments!(all_segs, segs_S, east, true; turn_curvature, speed_limit, lane_width)
     segs_S = add_straight_segments!(all_segs, segs_S, north; length=block_length, speed_limit, stop_outbound=true, stop_inbound=false)
     segs_I = add_segments!(all_segs, segs_S, north, segs_I)
-
-
-
     
     # segs_N = add_pullout_segments!(all_segs, segs_T, north; length=single_shortened_block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=true, pullout_outbound=false)
     # segs_N = add_curved_segments!(all_segs, segs_N, north, false; turn_curvature, speed_limit, lane_width)

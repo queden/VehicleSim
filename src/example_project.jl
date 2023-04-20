@@ -56,7 +56,7 @@ end
 using Rotations
 
 function get_current_state(latest_gt::GroundTruthMeasurement)
-    pos = latest_gt.positions
+    pos = latest_gt.position
 
     angle = latest_gt.orientation
     yaw = QuaternionToYaw(angle)
@@ -65,13 +65,12 @@ function get_current_state(latest_gt::GroundTruthMeasurement)
     [pos[1], pos[2], velo[1], yaw]
 end
 
-target_map_segment = 0 # (not a valid segment, will be overwritten by message)
+target_map_segment = 24 # -1 # (not a valid segment, will be overwritten by message)
 
 function decision_making(localization_state_channel, 
         perception_state_channel, 
         gt_channel, # for testing
         map, 
-        target_road_segment_id, 
         socket)
     # do some setup
 
@@ -79,10 +78,10 @@ function decision_making(localization_state_channel,
     @info "Waiting 5 to get accurate location info"
     sleep(1) # TODO Wait 5
 
-    timestep=0.2
+    timestep=0.5
     
     @info "Creating callback gen"
-    callbacks = create_callback_generator(max_vel=5.0, timestep, traj_length=15.0)
+    callbacks = create_callback_generator(max_vel=5.0, timestep=timestep, trajectory_length=4)
 
     # get initial state
     latest_gt = fetch(gt_channel)
@@ -92,6 +91,7 @@ function decision_making(localization_state_channel,
     lastPath = []
     trajectory = nothing
     current_step = 1
+    helicopterMode = false
 
     # Continuously generate new trajectories and save them
     errormonitor(@async while true
@@ -113,24 +113,57 @@ function decision_making(localization_state_channel,
 
             if (length(current_segments) == 0)
                 @info "Not on map, houston we are fucked"
+
+                @info "INITIALIZING HELICOPTER MODE"
+                helicopterMode = true
+
                 curr_seg_id = lastPath[1]
             else
-                curr_seg_id = current_segments[1]
+
+                # grab any element from map
+
+                for (k, v) in current_segments
+                    curr_seg_id = k
+                    break
+                end
             end
         end
 
         # we are not on the path, so we need to find a new path
-        @info "Not on path, finding new path"
-        lastPath = find_path(curr_seg_id, target_road_segment_id)
+        @info "Finding new path"
+        lastPath = find_path(curr_seg_id, target_map_segment)
 
-        trajectory = generate_trajectory(state, lastPath[1:2], target_road_segment_id, callbacks)
+        if (length(lastPath) == 1)
+            lastPath = [lastPath;lastPath]
+        end
+
+        if (length(lastPath) == 0)
+            sleep(1)
+            continue
+        end
+
+        trajectory = generate_trajectory(state, lastPath[1:2], target_map_segment, callbacks, map=map)
+
+        # could always sleep
+
         current_step = 1
     end
     )
 
+    alternate = 1
+
     while true
         
-        sleep(time_step)
+        sleep(timestep)
+
+        if (helicopterMode)
+            alternate = -alternate
+
+            cmd = VehicleCommand(10, alternate, true)
+            serialize(socket, cmd)
+
+            continue
+        end
 
         # No trajectory calculated yet
         if (trajectory === nothing) 
@@ -146,9 +179,9 @@ function decision_making(localization_state_channel,
 
             cmd = VehicleCommand(target_angle, target_velo, true)
             serialize(socket, cmd)
-        end
 
-        current_step++
+            current_step+=1
+        end
     end
 
 end
@@ -238,6 +271,5 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
     # @async localize(gps_channel, imu_channel, localization_state_channel)
     # @async perception(cam_channel, localization_state_channel, perception_state_channel)
     # @async decision_making(localization_state_channel, perception_state_channel, gt_state_channel,  map, socket)
-    #@async
-    decision_making(localization_state_channel, nothing, gt_channel,  map_segments, target_map_segment, socket)
+    decision_making(localization_state_channel, nothing, gt_channel,  map_segments, socket)
 end

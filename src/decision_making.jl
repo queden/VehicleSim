@@ -6,42 +6,10 @@ using LinearAlgebra
 using SparseArrays
 using Infiltrator
 using StaticArrays
-
-include("map.jl")
-
-function run_stuff()
-
-    map = training_map()
-
-    callbacks = create_callback_generator(max_vel=5.0)
-
-    @info "init state"
-
-    state = [0, 0, 0, 0]
-
-    # get middle pos of segment
-    starting = [0, 0]
-    divisor = 0
-    for lb in map[32].lane_boundaries
-        starting += lb.pt_a[1:2]
-        starting += lb.pt_b[1:2]
-        divisor += 2
-    end
-
-    starting /= divisor
-
-    state = [starting..., 0, 0]
-
-    @info "Generating trajectory starting at $starting"
-
-    @infiltrate
-
-    trajectory = generate_trajectory(state, [32, 30], 30, callbacks)
-
-end
-
 using SymPy
 using Polynomials
+
+include("map.jl")
 
 function get_points(lb::LaneBoundary) 
 
@@ -105,32 +73,18 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     # define variable that has to be an integer
     # @variables x::Int y::Int
 
-    X¹, path, target_id, Z = let
-        @variables(X¹[1:4], path[1:2], target_id, Z[1:6*trajectory_length]) .|> Symbolics.scalarize
+    X¹, lowerLane, upperLane, target_pos, Z = let
+        @variables(X¹[1:4], lowerLane[1:3], upperLane[1:3], target_pos[1:2], Z[1:6*trajectory_length]) .|> Symbolics.scalarize
     end
 
     states, controls = decompose_trajectory(Z)
 
-    @info "States are $states and controls are $controls"
-    
     all_states = [[X¹,]; states]
 
     # vehicle_2_prediction = constant_velocity_prediction(X², trajectory_length, timestep, tc)
     # vehicle_3_prediction = constant_velocity_prediction(X³, trajectory_length, timestep, tc)
    
     # get target pos from target id
-    target_pos = nothing
-
-    if (target_id in path)
-        # we can get to dest
-        
-        target_seg = map[target_id]
-        target_pos = (target_seg.lane_boundaries[2].pt_a + target_seg.lane_boundaries[2].pt_b + target_seg.lane_boundaries[3].pt_a + target_seg.lane_boundaries[3].pt_b) / 4
-    else
-        # if our target is not in range, we go to the next seg end. We may need a longer path
-        target_seg = map[path[2]]
-        target_pos = (target_seg.lane_boundaries[1].pt_b + target_seg.lane_boundaries[2].pt_b) / 2
-    end
 
     cost_val = sum(stage_cost(x, u, target_pos) for (x,u) in zip(states, controls))
 
@@ -141,46 +95,6 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     constraints_ub = Float64[]
 
     # we want to look at current segment and next segment and generate a polynomial as an upper and lower bound for our position 
-
-    # use lane boundaries of the starting segment fuck it
-    starting_seg_id = path[1]
-    next_seg_id = path[2] 
-
-    starting_seg = map[starting_seg_id]
-    next_seg = map[next_seg_id]
-
-    # lower lane boundary
-    firstXs, firstYs = get_points(starting_seg.lane_boundaries[1])
-    secondXs, secondYs = get_points(next_seg.lane_boundaries[1])
-    
-    lowerXs = [firstXs; secondXs]
-    lowerYs = [firstYs; secondYs]
-
-    # upper lane boundary
-    firstXs, firstYs = get_points(starting_seg.lane_boundaries[length(next_seg.lane_boundaries)])
-    secondXs, secondYs = get_points(next_seg.lane_boundaries[length(next_seg.lane_boundaries)])
-    
-    upperXs = [firstXs; secondXs]
-    upperYs = [firstYs; secondYs]
-
-    lowerLane = fit(lowerXs, lowerYs, 2)
-    upperLane = fit(upperXs, upperYs, 2)
-
-    sample = starting_seg.lane_boundaries[1].pt_b[1]
-    if (lowerLane(sample) > upperLane(sample))
-        
-        @info "Swapping boundaries"
-        
-        # switch
-        temp = lowerLane
-        lowerLane = upperLane
-        upperLane = temp
-    end
-
-    @infiltrate
-
-    @info "Lower lane is $lowerLane"
-    @info "Upper lane is $upperLane"
 
     for k in 1:trajectory_length
         # trajectory must obey physics
@@ -203,11 +117,14 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
 
         pos = states[k][1:2]
 
-        append!(constraints_val, pos[2] - lowerLane(pos[1])) 
+        poly = lowerLane[1] + lowerLane[2] * pos[1] + lowerLane[3] * pos[1] * pos[1]
+        poly2 = upperLane[1] + upperLane[2] * pos[1] + upperLane[3] * pos[1] * pos[1]
+
+        append!(constraints_val, pos[2] - poly) 
         append!(constraints_lb, 0)
         append!(constraints_ub, Inf)
 
-        append!(constraints_val, upperLane(pos[1]) - pos[2])
+        append!(constraints_val, poly2 - pos[2])
         append!(constraints_lb, 0)
         append!(constraints_ub, Inf) 
 
@@ -238,31 +155,31 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     expression = Val{false}
 
     full_cost_fn = let
-        cost_fn = Symbolics.build_function(cost_val, [Z;X¹;path;target_id]; expression)
-        (Z, X¹, path, target_id) -> cost_fn([Z;X¹;path;target_id])
+        cost_fn = Symbolics.build_function(cost_val, [Z;X¹;lowerLane;upperLane;target_pos]; expression)
+        (Z, X¹, lowerLane, upperLane, target_pos) -> cost_fn([Z;X¹;lowerLane;upperLane;target_pos])
     end
 
     full_cost_grad_fn = let
-        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z;X¹;path;target_id]; expression)[2]
+        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z;X¹;lowerLane;upperLane;target_pos]; expression)[2]
 
-        (grad, Z, X¹, path, target_id) -> begin
-            cost_grad_fn!(grad, [Z;X¹;path;target_id])
+        (grad, Z, X¹, lowerLane, upperLane, target_pos) -> begin
+            cost_grad_fn!(grad, [Z;X¹;lowerLane;upperLane;target_pos])
         end
     end
 
     full_constraint_fn = let
-        constraint_fn! = Symbolics.build_function(constraints_val, [Z;X¹;path;target_id]; expression)[2]
-        (cons, Z, X¹, path, target_id) -> constraint_fn!(cons, [Z;X¹])
+        constraint_fn! = Symbolics.build_function(constraints_val, [Z;X¹;lowerLane;upperLane;target_pos]; expression)[2]
+        (cons, Z, X¹, lowerLane, upperLane, target_pos) -> constraint_fn!(cons, [Z;X¹;lowerLane;upperLane;target_pos])
     end
 
     full_constraint_jac_vals_fn = let
-        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z;X¹;path;target_id]; expression)[2]
-        (vals, Z, X¹, path, target_id) -> constraint_jac_vals_fn!(vals, [Z;X¹])
+        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z;X¹;lowerLane;upperLane;target_pos]; expression)[2]
+        (vals, Z, X¹, lowerLane, upperLane, target_pos) -> constraint_jac_vals_fn!(vals, [Z;X¹;lowerLane;upperLane;target_pos])
     end
     
     full_hess_vals_fn = let
-        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z;X¹;path;target_id;λ;cost_scaling]; expression)[2]
-        (vals, Z, X¹, path, target_id, λ, cost_scaling) -> hess_vals_fn!(vals, [Z;X¹;path;target_id;λ;cost_scaling])
+        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z;X¹;lowerLane;upperLane;target_pos;λ;cost_scaling]; expression)[2]
+        (vals, Z, X¹, lowerLane, upperLane, target_pos, λ, cost_scaling) -> hess_vals_fn!(vals, [Z;X¹;lowerLane;upperLane;target_pos;λ;cost_scaling])
     end
 
     full_constraint_jac_triplet = (; jac_rows, jac_cols, full_constraint_jac_vals_fn)
@@ -313,41 +230,94 @@ end
 Cost at each stage of the plan
 """
 function stage_cost(X, U, target_pos)
-    @info "Stage cost with X = $X and U = $U"
-
     # for now, higher velocity is better
 
     # penalize being far from target location
-    targDistPenalty = 0.5 * norm(X[1:2] - target_pos)^2
+
+    targDistPenalty = 0.5 * norm(X[1:2] - target_pos[1:2])^2
 
     return -2 * U[1]^2 + 0.1 * U[2]^2 - X[3] + targDistPenalty
 end
 
 # Don't call this function until we know where we are
-function generate_trajectory(starting_state, path, target_id, callbacks; trajectory_length=8)
+function generate_trajectory(starting_state, path, target_id, callbacks; trajectory_length=8, map=training_map())
     X1 = starting_state
-    # X2 = V2.state
-    # X3 = V3.state
-    # r1 = ego.r
-    # r2 = V2.r
-    # r3 = V3.r
-   
+
+    target_pos = nothing
+
+    if (target_id in path)
+        # we can get to dest
+         
+        target_seg = map[target_id]
+        target_pos = target_seg.lane_boundaries[2].pt_a + target_seg.lane_boundaries[2]
+        target_seg.lane_boundaries[3].pt_a + target_seg.lane_boundaries[3].pt_b
+        
+        target_pos = target_pos / 4.0
+    else
+        # if our target is not in range, we go to the next seg end. We may need a longer path
+        target_seg = map[path[2]]
+        target_pos = (target_seg.lane_boundaries[1].pt_b + target_seg.lane_boundaries[2].pt_b) / 2
+    end
+
+    # use lane boundaries of the starting segment fuck it
+    starting_seg_id = path[1]
+    next_seg_id = path[2] 
+
+    starting_seg = map[starting_seg_id]
+    next_seg = map[next_seg_id]
+
+    # lower lane boundary
+    firstXs, firstYs = get_points(starting_seg.lane_boundaries[1])
+    secondXs, secondYs = get_points(next_seg.lane_boundaries[1])
+    
+    lowerXs = [firstXs; secondXs]
+    lowerYs = [firstYs; secondYs]
+
+    # upper lane boundary
+    firstXs, firstYs = get_points(starting_seg.lane_boundaries[length(next_seg.lane_boundaries)])
+    secondXs, secondYs = get_points(next_seg.lane_boundaries[length(next_seg.lane_boundaries)])
+    
+    upperXs = [firstXs; secondXs]
+    upperYs = [firstYs; secondYs]
+
+    lowerLane = fit(lowerXs, lowerYs, 2)
+    upperLane = fit(upperXs, upperYs, 2)
+
+    # convert lowerLane to symbolics expr
+    
+
+    sample = starting_seg.lane_boundaries[1].pt_b[1]
+    if (lowerLane(sample) > upperLane(sample))
+        
+        @info "Swapping boundaries"
+        
+        # switch
+        temp = lowerLane
+        lowerLane = upperLane
+        upperLane = temp
+    end
+
+    lowerLane = lowerLane.coeffs
+    upperLane = upperLane.coeffs
+
+    @info "What are polys"
+
     # TODO refine callbacks given current positions of vehicles, lane geometry,
     # etc.
     # refine callbacks with current values of parameters / problem inputs
     wrapper_f = function(z) 
         # callbacks.full_cost_fn(z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
-        callbacks.full_cost_fn(z, X1, path, target_id)
+        callbacks.full_cost_fn(z, X1, lowerLane, upperLane, target_pos)
     end
     wrapper_grad_f = function(z, grad)
         # callbacks.full_cost_grad_fn(grad, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
 
-        callbacks.full_cost_grad_fn(grad, z, X1, path, target_id)
+        callbacks.full_cost_grad_fn(grad, z, X1, lowerLane, upperLane, target_pos)
     end
     wrapper_con = function(z, con)
         # callbacks.full_constraint_fn(con, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
 
-        callbacks.full_constraint_fn(con, z, X1, path, target_id)
+        callbacks.full_constraint_fn(con, z, X1, lowerLane, upperLane, target_pos)
     end
     wrapper_con_jac = function(z, rows, cols, vals)
         if isnothing(vals)
@@ -355,7 +325,7 @@ function generate_trajectory(starting_state, path, target_id, callbacks; traject
             cols .= callbacks.full_constraint_jac_triplet.jac_cols
         else
             # callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
-            callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1, path, target_id)
+            callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1, lowerLane, upperLane, target_pos)
         end
         nothing
     end
@@ -365,7 +335,7 @@ function generate_trajectory(starting_state, path, target_id, callbacks; traject
             cols .= callbacks.full_lag_hess_triplet.hess_cols
         else
             # callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center, λ, cost_scaling)
-            callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, path, target_id, λ, cost_scaling)
+            callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, lowerLane, upperLane, target_pos, λ, cost_scaling)
         end
         nothing
     end
