@@ -15,6 +15,9 @@ using Suppressor
 using Sockets
 using Serialization
 using StaticArrays
+using Random
+using Distributions
+using StatsBase
 
 include("view_car.jl")
 include("objects.jl")
@@ -25,7 +28,8 @@ include("sink.jl")
 include("measurements.jl")
 include("map.jl")
 include("example_project.jl")
+include("localization.jl")
 
-export server, shutdown!, my_client, keyboard_client
+export server, shutdown!, my_client, keyboard_client, example_client
 
 end

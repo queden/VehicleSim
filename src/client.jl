@@ -128,25 +128,100 @@ function keyboard_client(host::IPAddr=IPv4(0), port=4444; v_step = 1.0, s_step =
 end
 
 function example_client(host::IPAddr=IPv4(0), port=4444)
-    socket = Sockets.connect(host, port)
-    map_segments = training_map()
-    (; chevy_base) = load_mechanism()
+        start_time = time()
+        
+        socket = Sockets.connect(host, port)
+    
+        end_time = time()
+    
+        map_segments = training_map()
+    
+        response_time = (end_time - start_time) * 1000  # convert to milliseconds
+        println("Response time: $response_time ms")
+        
+        gps_channel = Channel{GPSMeasurement}(10)
+        imu_channel = Channel{IMUMeasurement}(10)
+        localization_state_channel = Channel{Particle}(10)
 
-    @async while isopen(socket)
-        state_msg = deserialize(socket)
-    end
-   
-    shutdown = false
-    persist = true
-    while isopen(socket)
-        position = state_msg.q[5:7]
-        @info position
-        if norm(position) >= 100
-            shutdown = true
-            persist = false
+        (peer_host, peer_port) = getpeername(socket)
+        msg = deserialize(socket) # Visualization info
+        @info msg
+    
+        last_target = -1
+        current_id = -1
+        current_pos = SVector(0.0, 0.0, 0.0)
+
+        errormonitor(@async localization(gps_channel, imu_channel, localization_state_channel))
+
+        errormonitor(@async try 
+            while isopen(socket)
+                sleep(0.001)
+                state_msg = deserialize(socket)
+        
+                target_map_segment = state_msg.target_segment
+    
+                if target_map_segment != last_target
+                    println("Target segment: $target_map_segment")
+                    last_target = target_map_segment
+                end
+    
+                measurements = state_msg.measurements
+                num_cam = 0
+                num_imu = 0
+                num_gps = 0
+                num_gt = 0
+        
+                for meas in measurements
+                    if meas isa GroundTruthMeasurement
+                        num_gt += 1
+                        
+                        # get curr pos
+                        if current_id != meas.vehicle_id
+                            current_id = meas.vehicle_id
+                            println("Vehicle id: $current_id")
+                        end
+                        current_pos = meas.position
+        
+                        # scan map for segment with pos
+                        # for i in 1:length(map_segments)
+                        #     seg = map_segments[i]
+                        #     if seg.start <= curr_pos <= seg.stop
+                        #         println("curr seg: ", i)
+                        #         break
+                        #     end
+                        # end
+        
+                        
+                    elseif meas isa CameraMeasurement
+                        num_cam += 1
+                    elseif meas isa IMUMeasurement
+                        num_imu += 1
+                        put!(imu_channel, meas)
+                    elseif meas isa GPSMeasurement
+                        num_gps += 1
+                        put!(gps_channel, meas)
+                        # println("GPS: ", meas.lat, meas.long)
+                    end
+                end
+          #      @info "Measurements received: $num_gt gt; $num_cam cam; $num_imu imu; $num_gps gps"
+            end
+        catch e
+            print("Error encountered: $e")
+            @info "Client disconnected."
         end
-        cmd = VehicleCommand(0.0, 2.5, persist, shutdown)
-        serialize(socket, cmd) 
+        )
+        controlled = true
+        @info "Press 'q' at any time to terminate vehicle."
+        while controlled && isopen(socket)
+            key = get_c()
+            if key == 'q'
+                # terminate vehicle
+                controlled = false
+                target_velocity = 0.0
+                steering_angle = 0.0
+                @info "Terminating Keyboard Client."
+        end
     end
-
 end
+    
+    
