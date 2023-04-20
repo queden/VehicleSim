@@ -59,7 +59,7 @@ function decision_making(localization_state_channel,
         perception_state_channel, 
         gt_channel, # for testing
         map, 
-        #target_road_segment_id, 
+        target_road_segment_id, 
         socket)
     # do some setup
 
@@ -75,6 +75,9 @@ function decision_making(localization_state_channel,
 
     @info "Callback gen created"
 
+    last_curr_seg_id = -1
+    last_target_seg_id = -1
+
     while true
 
         sleep(1.0)
@@ -85,7 +88,18 @@ function decision_making(localization_state_channel,
 
         @info "Position is $pos"
 
-        seg = get_segments(map, pos)
+        curr_seg = get_segments(map, pos)
+        curr_seg_id = first(keys(curr_seg))
+
+        # find path to take if curr_seg or target_seg has changed
+        if curr_seg_id != last_curr_seg_id || target_road_segment_id != last_target_seg_id
+            @info "Trying to find path: "
+            path = find_path(curr_seg_id, target_road_segment_id)
+            @info "Path: $path"
+            last_curr_seg_id = curr_seg_id
+            last_target_seg_id = target_road_segment_id
+        end
+
 
         angle = latest_gt.orientation
         yaw = QuaternionToYaw(angle)
@@ -125,8 +139,7 @@ function decision_making(localization_state_channel,
         #print("Pos: " + str(latest_gt.position) + "\n")
 
         # figure out what to do ... setup motion planning problem etc
-        steering_angle = 0.0
-        target_vel = 0
+        steering_angle, target_vel = run_stuff()
         cmd = VehicleCommand(steering_angle, target_vel, true)
         serialize(socket, cmd)
 
@@ -222,5 +235,5 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
     # @async perception(cam_channel, localization_state_channel, perception_state_channel)
     # @async decision_making(localization_state_channel, perception_state_channel, gt_state_channel,  map, socket)
     #@async
-    decision_making(localization_state_channel, nothing, gt_channel,  map_segments, socket)
+    decision_making(localization_state_channel, nothing, gt_channel,  map_segments, target_map_segment, socket)
 end
