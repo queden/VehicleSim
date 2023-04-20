@@ -72,6 +72,7 @@ function server(max_vehicles=1,
             end
         end
         spawn_points[vehicle_id] = seg
+        @info "Spawning vehicle $vehicle_id at $(seg.id)\n"
         vehicle = spawn_car_on_map(all_visualizers, seg, chevy_base, chevy_visuals, chevy_joints, vehicle_id)
         @async sim_car(cmd_channels[vehicle_id], state_channels[vehicle_id], shutdown_channel, vehicle, vehicle_id)
         vehicles[vehicle_id] = vehicle
@@ -110,9 +111,13 @@ function server(max_vehicles=1,
         end
         while true
             try
+                @info "Waiting for client"
                 sock = accept(server)
                 @info "Client accepted."
                 client_count = mod1(client_count+1, max_vehicles)
+
+                @info "Vehicle id $client_count requested."
+
                 if client_connections[client_count]
                     @error "Requested vehicle already in use!"
                     close(sock)
@@ -120,25 +125,44 @@ function server(max_vehicles=1,
                 end
                 serialize(sock, inform_hostport(client_visualizers[client_count], "Client follow-cam"))
                 let vehicle_id=client_count
-                    errormonitor(@async begin
-                        while isopen(sock)
-                            sleep(0.001)
-                            car_cmd = deserialize(sock)
-                            put!(cmd_channels[vehicle_id], car_cmd)
-                            if !car_cmd.controlled
-                                close(sock)
-                           end
-                        end
-                    end)
-                    errormointor(@async begin
-                        while isopen(sock)
-                            sleep(0.001)
-                            if isready(meas_channels[vehicle_id])       
-                                msg = take!(meas_channels[vehicle_id])
-                                serialize(sock, msg)
+                    @async begin
+                        try
+                            while isopen(sock)
+                                sleep(0.001)
+                                local car_cmd
+                                received = false
+                                while true
+                                    @async eof(sock)
+                                    if bytesavailable(sock) > 0
+                                        car_cmd = deserialize(sock)
+                                        received = true
+                                    else
+                                        break
+                                    end
+                                end
+                                !received && continue
+                                put!(cmd_channels[vehicle_id], car_cmd)
+                                if !car_cmd.controlled
+                                    close(sock)
+                               end
                             end
+                        catch e
+                            @warn "Error receiving command for vehicle $vehicle_id. Did client fail?"
                         end
-                    end)
+                    end
+                    @async begin
+                        try
+                            while isopen(sock)
+                                sleep(0.001)
+                                if isready(meas_channels[vehicle_id])
+                                    msg = take!(meas_channels[vehicle_id])
+                                    serialize(sock, msg)
+                                end
+                            end
+                        catch e
+                            @warn "Error sending measurements to vehicle $vehicle_id. Did client fail?"
+                        end
+                    end
                 end
             catch e
                 break
@@ -232,6 +256,7 @@ function sim_car(cmd_channel, state_channel, shutdown_channel, vehicle, vehicle_
                          publisher!;
                          max_realtime_rate=1.0)
     catch e
+        @warn "Terminating simulation for vehicle $vehicle_id."
         foreach(mvis->delete_vehicle!(mvis), mviss)
     end
 end

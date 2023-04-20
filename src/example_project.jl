@@ -92,7 +92,6 @@ function test_algorithms(gt_channel,
             end
         end
     end
-end
 
 function localize(gps_channel, imu_channel, localization_state_channel)
     # Set up algorithm / initialize variables
@@ -141,22 +140,29 @@ end
 
 function decision_making(localization_state_channel, 
         perception_state_channel, 
+        gt_channel, # for testing
         map, 
-        target_road_segment_id, 
+        #target_road_segment_id, 
         socket)
     # do some setup
+
     while true
-        latest_localization_state = fetch(localization_state_channel)
-        latest_perception_state = fetch(perception_state_channel)
+
+        latest_gt = fetch(gt_channel)
+
+        # latest_perception_state = fetch(perception_state_channel)
+
+        # latest_gt_state = fetch(gt_channel)
+
+        #print("Pos: " + str(latest_gt.position) + "\n")
 
         # figure out what to do ... setup motion planning problem etc
         steering_angle = 0.0
-        target_vel = 0.0
+        target_vel = 10
         cmd = VehicleCommand(steering_angle, target_vel, true)
         serialize(socket, cmd)
     end
 end
-
 
 function isfull(ch:Channel)
     length(ch.data) ≥ ch.sz_max
@@ -165,24 +171,51 @@ end
 
 function my_client(host::IPAddr=IPv4(0), port=4444)
     socket = Sockets.connect(host, port)
-    map_segments = training_map()
+    map_segments = VehicleSim.training_map()
+    
+    msg = deserialize(socket) # Visualization info
+    @info msg
 
     gps_channel = Channel{GPSMeasurement}(32)
     imu_channel = Channel{IMUMeasurement}(32)
     cam_channel = Channel{CameraMeasurement}(32)
     gt_channel = Channel{GroundTruthMeasurement}(32)
 
-    localization_state_channel = Channel{MyLocalizationType}(1)
+    localization_state_channel = Channel{GroundTruthMeasurement}(1)
     perception_state_channel = Channel{MyPerceptionType}(1)
 
     target_map_segment = 0 # (not a valid segment, will be overwritten by message)
     ego_vehicle_id = 0 # (not a valid id, will be overwritten by message. This is used for discerning ground-truth messages)
 
-    @async while true
-        measurement_msg = deserialize(socket)
-        target_map_segment = meas.target_segment
-        ego_vehicle_id = meas.vehicle_id
+    errormonitor(@async while true
+        # This while loop reads to the end of the socket stream (makes sure you
+        # are looking at the latest messages)
+
+
+        sleep(0.001)
+        local measurement_msg
+        received = false
+        while true
+
+            # get ping from server
+            
+
+            @async eof(socket)
+            if bytesavailable(socket) > 0
+                measurement_msg = deserialize(socket)
+                received = true
+            else
+                break
+            end
+        end
+        !received && continue
+        target_map_segment = measurement_msg.target_segment
+
+
+       
+        ego_vehicle_id = measurement_msg.vehicle_id
         for meas in measurement_msg.measurements
+
             if meas isa GPSMeasurement
                 !isfull(gps_channel) && put!(gps_channel, meas)
             elseif meas isa IMUMeasurement
@@ -193,7 +226,7 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
                 !isfull(gt_channel) && put!(gt_channel, meas)
             end
         end
-    end
+    end)
 
     @async localize(gps_channel, imu_channel, localization_state_channel)
     @async perception(cam_channel, localization_state_channel, perception_state_channel)
