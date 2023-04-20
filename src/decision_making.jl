@@ -30,6 +30,8 @@ function run_stuff()
 
     starting /= divisor
 
+    state = [starting..., 0, 0]
+
     @info "Generating trajectory starting at $starting"
 
     @infiltrate
@@ -118,10 +120,23 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     lowerLane = fit(lowerXs, lowerYs, 2)
     upperLane = fit(upperXs, upperYs, 2)
 
-    @info "Lower lane is $lowerLane"
-    @info "Upper lane is $upperLane"
+    @info "Lanes"
+    @infiltrate
+
+    if (lowerLane(pt_b[1]) > upperLane(pt_b[1]))
+        
+        @info "Swapping boundaries"
+        
+        # switch
+        temp = lowerLane
+        lowerLane = upperLane
+        upperLane = temp
+    end
 
     @infiltrate
+
+    @info "Lower lane is $lowerLane"
+    @info "Upper lane is $upperLane"
 
     for k in 1:trajectory_length
         # trajectory must obey physics
@@ -142,15 +157,15 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
 
         # stay within lane polynomials
 
-        # pos = states[k][1:2]
+        pos = states[k][1:2]
 
-        # append!(constraints_val, pos[2] - lowerLane(pos[1]))
-        # append!(constraints_lb, 0)
-        # append!(constraints_ub, Inf)
+        append!(constraints_val, pos[2] - lowerLane(pos[1])) 
+        append!(constraints_lb, 0)
+        append!(constraints_ub, Inf)
 
-        # append!(constraints_val, upperLane(pos[1]) - pos[2])
-        # append!(constraints_lb, 0)
-        # append!(constraints_ub, Inf) 
+        append!(constraints_val, upperLane(pos[1]) - pos[2])
+        append!(constraints_lb, 0)
+        append!(constraints_ub, Inf) 
 
         # @info "controls $(controls[k][1])"
         
@@ -330,6 +345,9 @@ function generate_trajectory(starting_state, callbacks; trajectory_length=8)
     controls = repeat([zeros(2),], trajectory_length)
     states = repeat([starting_state,], trajectory_length)
     zinit = compose_trajectory(states, controls)
+
+    @info "Check zinit"
+
     prob.x = zinit
 
     @info "Solving with IPOPT"
