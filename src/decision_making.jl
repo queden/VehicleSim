@@ -36,7 +36,7 @@ function run_stuff()
 
     @infiltrate
 
-    trajectory = generate_trajectory(state, callbacks)
+    trajectory = generate_trajectory(state, [32, 30], 30, callbacks)
 
 end
 
@@ -105,8 +105,8 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     # define variable that has to be an integer
     # @variables x::Int y::Int
 
-    X¹, Z = let
-        @variables(X¹[1:4], Z[1:6*trajectory_length]) .|> Symbolics.scalarize
+    X¹, path, target_id, Z = let
+        @variables(X¹[1:4], path[1:2], target_id, Z[1:6*trajectory_length]) .|> Symbolics.scalarize
     end
 
     states, controls = decompose_trajectory(Z)
@@ -118,7 +118,21 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     # vehicle_2_prediction = constant_velocity_prediction(X², trajectory_length, timestep, tc)
     # vehicle_3_prediction = constant_velocity_prediction(X³, trajectory_length, timestep, tc)
    
-    cost_val = sum(stage_cost(x, u) for (x,u) in zip(states, controls))
+    # get target pos from target id
+    target_pos = nothing
+
+    if (target_id in path)
+        # we can get to dest
+        
+        target_seg = map[target_id]
+        target_pos = (target_seg.lane_boundaries[2].pt_a + target_seg.lane_boundaries[2].pt_b + target_seg.lane_boundaries[3].pt_a + target_seg.lane_boundaries[3].pt_b) / 4
+    else
+        # if our target is not in range, we go to the next seg end. We may need a longer path
+        target_seg = map[path[2]]
+        target_pos = (target_seg.lane_boundaries[1].pt_b + target_seg.lane_boundaries[2].pt_b) / 2
+    end
+
+    cost_val = sum(stage_cost(x, u, target_pos) for (x,u) in zip(states, controls))
 
     cost_grad = Symbolics.gradient(cost_val, Z)
 
@@ -128,10 +142,9 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
 
     # we want to look at current segment and next segment and generate a polynomial as an upper and lower bound for our position 
 
-
     # use lane boundaries of the starting segment fuck it
-    starting_seg_id = 32 # nothing 
-    next_seg_id = 30 # nothing
+    starting_seg_id = path[1]
+    next_seg_id = path[2] 
 
     starting_seg = map[starting_seg_id]
     next_seg = map[next_seg_id]
@@ -225,31 +238,31 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     expression = Val{false}
 
     full_cost_fn = let
-        cost_fn = Symbolics.build_function(cost_val, [Z;X¹]; expression)
-        (Z, X¹) -> cost_fn([Z;X¹])
+        cost_fn = Symbolics.build_function(cost_val, [Z;X¹;path;target_id]; expression)
+        (Z, X¹, path, target_id) -> cost_fn([Z;X¹;path;target_id])
     end
 
     full_cost_grad_fn = let
-        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z;X¹]; expression)[2]
+        cost_grad_fn! = Symbolics.build_function(cost_grad, [Z;X¹;path;target_id]; expression)[2]
 
-        (grad, Z, X¹) -> begin
-            cost_grad_fn!(grad, [Z;X¹])
+        (grad, Z, X¹, path, target_id) -> begin
+            cost_grad_fn!(grad, [Z;X¹;path;target_id])
         end
     end
 
     full_constraint_fn = let
-        constraint_fn! = Symbolics.build_function(constraints_val, [Z;X¹]; expression)[2]
-        (cons, Z, X¹) -> constraint_fn!(cons, [Z;X¹])
+        constraint_fn! = Symbolics.build_function(constraints_val, [Z;X¹;path;target_id]; expression)[2]
+        (cons, Z, X¹, path, target_id) -> constraint_fn!(cons, [Z;X¹])
     end
 
     full_constraint_jac_vals_fn = let
-        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z;X¹]; expression)[2]
-        (vals, Z, X¹) -> constraint_jac_vals_fn!(vals, [Z;X¹])
+        constraint_jac_vals_fn! = Symbolics.build_function(jac_vals, [Z;X¹;path;target_id]; expression)[2]
+        (vals, Z, X¹, path, target_id) -> constraint_jac_vals_fn!(vals, [Z;X¹])
     end
     
     full_hess_vals_fn = let
-        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z;X¹;λ;cost_scaling]; expression)[2]
-        (vals, Z, X¹, λ, cost_scaling) -> hess_vals_fn!(vals, [Z;X¹;λ;cost_scaling])
+        hess_vals_fn! = Symbolics.build_function(hess_vals, [Z;X¹;path;target_id;λ;cost_scaling]; expression)[2]
+        (vals, Z, X¹, path, target_id, λ, cost_scaling) -> hess_vals_fn!(vals, [Z;X¹;path;target_id;λ;cost_scaling])
     end
 
     full_constraint_jac_triplet = (; jac_rows, jac_cols, full_constraint_jac_vals_fn)
@@ -299,16 +312,19 @@ end
 """
 Cost at each stage of the plan
 """
-function stage_cost(X, U)
+function stage_cost(X, U, target_pos)
     @info "Stage cost with X = $X and U = $U"
 
     # for now, higher velocity is better
 
-    return -2 * U[1]^2 + 0.1 * U[2]^2 - X[3]
+    # penalize being far from target location
+    targDistPenalty = 0.5 * norm(X[1:2] - target_pos)^2
+
+    return -2 * U[1]^2 + 0.1 * U[2]^2 - X[3] + targDistPenalty
 end
 
 # Don't call this function until we know where we are
-function generate_trajectory(starting_state, callbacks; trajectory_length=8)
+function generate_trajectory(starting_state, path, target_id, callbacks; trajectory_length=8)
     X1 = starting_state
     # X2 = V2.state
     # X3 = V3.state
@@ -321,17 +337,17 @@ function generate_trajectory(starting_state, callbacks; trajectory_length=8)
     # refine callbacks with current values of parameters / problem inputs
     wrapper_f = function(z) 
         # callbacks.full_cost_fn(z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
-        callbacks.full_cost_fn(z, X1)
+        callbacks.full_cost_fn(z, X1, path, target_id)
     end
     wrapper_grad_f = function(z, grad)
         # callbacks.full_cost_grad_fn(grad, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
 
-        callbacks.full_cost_grad_fn(grad, z, X1)
+        callbacks.full_cost_grad_fn(grad, z, X1, path, target_id)
     end
     wrapper_con = function(z, con)
         # callbacks.full_constraint_fn(con, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
 
-        callbacks.full_constraint_fn(con, z, X1)
+        callbacks.full_constraint_fn(con, z, X1, path, target_id)
     end
     wrapper_con_jac = function(z, rows, cols, vals)
         if isnothing(vals)
@@ -339,7 +355,7 @@ function generate_trajectory(starting_state, callbacks; trajectory_length=8)
             cols .= callbacks.full_constraint_jac_triplet.jac_cols
         else
             # callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center)
-            callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1)
+            callbacks.full_constraint_jac_triplet.full_constraint_jac_vals_fn(vals, z, X1, path, target_id)
         end
         nothing
     end
@@ -349,7 +365,7 @@ function generate_trajectory(starting_state, callbacks; trajectory_length=8)
             cols .= callbacks.full_lag_hess_triplet.hess_cols
         else
             # callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, X2, X3, r1, r2, r3, track_radius, lane_width, track_center, λ, cost_scaling)
-            callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, λ, cost_scaling)
+            callbacks.full_lag_hess_triplet.full_hess_vals_fn(vals, z, X1, path, target_id, λ, cost_scaling)
         end
         nothing
     end

@@ -55,6 +55,18 @@ end
 
 using Rotations
 
+function get_current_state(latest_gt::GroundTruthMeasurement)
+    pos = latest_gt.positions
+
+    angle = latest_gt.orientation
+    yaw = QuaternionToYaw(angle)
+    velo = latest_gt.velocity
+ 
+    [pos[1], pos[2], velo[1], yaw]
+end
+
+target_map_segment = 0 # (not a valid segment, will be overwritten by message)
+
 function decision_making(localization_state_channel, 
         perception_state_channel, 
         gt_channel, # for testing
@@ -63,71 +75,82 @@ function decision_making(localization_state_channel,
         socket)
     # do some setup
 
+    # wait 5 seconds for location to be set
+    @info "Waiting 5 to get accurate location info"
+    sleep(1) # TODO Wait 5
+
+    timestep=0.2
+    
     @info "Creating callback gen"
-    callbacks = nothing
+    callbacks = create_callback_generator(max_vel=5.0, timestep, traj_length=15.0)
 
-    try
-        callbacks = create_callback_generator(max_vel=5.0)
-    catch e
-        @info "Error encountered: $e"
-        return
+    # get initial state
+    latest_gt = fetch(gt_channel)
+    state = get_current_state(latest_gt)
+
+    # get our first trajectory
+    lastPath = []
+    trajectory = nothing
+    current_step = 1
+
+    # Continuously generate new trajectories and save them
+    errormonitor(@async while true
+        # get latest state
+        latest_gt = fetch(gt_channel)
+        state = get_current_state(latest_gt)
+
+        curr_seg_id = nothing
+        for seg_id in lastPath
+            if inside_segment(state[1:2], map.segments[seg_id])
+                curr_seg_id = seg_id
+                break
+            end
+        end
+
+        if (curr_seg_id === nothing)
+
+            current_segments = get_segments(map, state[1:2])
+
+            if (length(current_segments) == 0)
+                @info "Not on map, houston we are fucked"
+                curr_seg_id = lastPath[1]
+            else
+                curr_seg_id = current_segments[1]
+            end
+        end
+
+        # we are not on the path, so we need to find a new path
+        @info "Not on path, finding new path"
+        lastPath = find_path(curr_seg_id, target_road_segment_id)
+
+        trajectory = generate_trajectory(state, lastPath[1:2], target_road_segment_id, callbacks)
+        current_step = 1
     end
-
-    @info "Callback gen created"
-
-    last_curr_seg_id = -1
-    last_target_seg_id = -1
+    )
 
     while true
-
-        sleep(1.0)
-
-        latest_gt = fetch(gt_channel)
         
-        pos = latest_gt.position
+        sleep(time_step)
 
-        @info "Position is $pos"
-
-        curr_seg = get_segments(map, pos)
-        curr_seg_id = first(keys(curr_seg))
-
-        # find path to take if curr_seg or target_seg has changed
-        if curr_seg_id != last_curr_seg_id || target_road_segment_id != last_target_seg_id
-            @info "Trying to find path: "
-            path = find_path(curr_seg_id, target_road_segment_id)
-            @info "Path: $path"
-            last_curr_seg_id = curr_seg_id
-            last_target_seg_id = target_road_segment_id
+        # No trajectory calculated yet
+        if (trajectory === nothing) 
+            continue
         end
 
+        states, controls = decompose_trajectory(trajectory)
 
-        angle = latest_gt.orientation
-        yaw = QuaternionToYaw(angle)
+        if length(states) >= current_step
+            # apply the current step controls
+            target_angle = controls[current_step][2]
+            target_velo = states[current_step][3]
 
-        #trajectory = generate_trajectory(ego, V2, V3, track_radius, lane_width, track_center, callbacks, traj_length, timestep)
-
-        velo = latest_gt.velocity
-
-        @info "Velocity is type $(typeof(velo)) and value $velo"
-
-        # TODO: velo[1] is totally wrong 
-        state = [pos[1], pos[2], velo[1], yaw]
-
-        @info "Generating trajectory"
-
-        trajectory = generate_trajectory(state, callbacks)
-
-        _, controls, __ = run_stuff()
-        for control in controls
-            target_angle, target_vel = control
-            # eventually add buffer for commands 
-            cmd = VehicleCommand(target_angle, target_vel, true)
+            cmd = VehicleCommand(target_angle, target_velo, true)
             serialize(socket, cmd)
         end
-        # cmd = VehicleCommand(steering_angle, target_vel, true)
-        # serialize(socket, cmd)
 
+        current_step++
     end
+
 end
 
 # this is prob wrong but we rolling with it for now
@@ -170,7 +193,7 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
     localization_state_channel = Channel{GroundTruthMeasurement}(1)
     perception_state_channel = Channel{MyPerceptionType}(1)
 
-    target_map_segment = 0 # (not a valid segment, will be overwritten by message)
+    # target_map_segment = 0 # (not a valid segment, will be overwritten by message)
     ego_vehicle_id = 0 # (not a valid id, will be overwritten by message. This is used for discerning ground-truth messages)
 
     errormonitor(@async while true
@@ -197,8 +220,6 @@ function my_client(host::IPAddr=IPv4(0), port=4444)
         !received && continue
         target_map_segment = measurement_msg.target_segment
 
-
-       
         ego_vehicle_id = measurement_msg.vehicle_id
         for meas in measurement_msg.measurements
 
