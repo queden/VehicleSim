@@ -15,23 +15,9 @@ function run_stuff()
 
     callbacks = create_callback_generator(max_vel=5.0)
 
-    # seg = get_segments(map, pos)
-
-    # angle = latest_gt.orientation
-    # yaw = QuaternionToYaw(angle)
-
-    #trajectory = generate_trajectory(ego, V2, V3, track_radius, lane_width, track_center, callbacks, traj_length, timestep)
-
-    # velo = latest_gt.velocity
-
-    # @info "Velocity is type $(typeof(velo)) and value $velo"
-
-    # TODO: velo[1] is totally wrong 
-    # state = [pos[1], pos[2], yaw, velo[1], angular velo, current_segment_id]
-
     @info "init state"
 
-    state = [0, 0, 0, 0, 0]
+    state = [0, 0, 0, 0]
 
     # get middle pos of segment
     starting = [0, 0]
@@ -45,6 +31,8 @@ function run_stuff()
     starting /= divisor
 
     @info "Generating trajectory starting at $starting"
+
+    @infiltrate
 
     trajectory = generate_trajectory(state, callbacks)
 
@@ -70,18 +58,18 @@ The purpose of this function is to construct functions which can quickly turn
 updated world information into planning problems that IPOPT can solve.
 """
 # trajectory_length=40, timestep=0.2, R = Diagonal([0.1, 0.5]), 
-function create_callback_generator(; map=training_map(), max_vel=10.0, trajectory_length=2, R = Diagonal([0.1, 0.5]), timestep=0.2)
+function create_callback_generator(; map=training_map(), max_vel=10.0, trajectory_length=8, R = Diagonal([0.1, 0.5]), timestep=0.2)
 
     # Define symbolic variables for all inputs, as well as trajectory
    
     # State = [x, y, velocity, yaw(steering_angle)]
-    # inputs = [target velo, target steering angle]
+    # inputs = [accel, angular velo angle]
 
     # define variable that has to be an integer
     # @variables x::Int y::Int
 
     X¹, Z = let
-        @variables(X¹[1:5], Z[1:7*trajectory_length]) .|> Symbolics.scalarize
+        @variables(X¹[1:4], Z[1:6*trajectory_length]) .|> Symbolics.scalarize
     end
 
     states, controls = decompose_trajectory(Z)
@@ -100,7 +88,6 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     constraints_val = Symbolics.Num[]
     constraints_lb = Float64[]
     constraints_ub = Float64[]
-
 
     # we want to look at current segment and next segment and generate a polynomial as an upper and lower bound for our position 
 
@@ -134,16 +121,18 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
     @info "Lower lane is $lowerLane"
     @info "Upper lane is $upperLane"
 
+    @infiltrate
+
     for k in 1:trajectory_length
         # trajectory must obey physics
 
         evolv = all_states[k+1] .- evolve_state(all_states[k], controls[k], timestep)
 
-        # @info "Evolv is $evolv"
+        # # @info "Evolv is $evolv"
 
         append!(constraints_val, evolv)
-        append!(constraints_lb, zeros(5)) # fuck it maybe only mostly follow physics?
-        append!(constraints_ub, zeros(5))
+        append!(constraints_lb, zeros(4)) # fuck it maybe only mostly follow physics?
+        append!(constraints_ub, zeros(4))
 
         # lane boundaries... stay in parent or a child's
 
@@ -153,25 +142,25 @@ function create_callback_generator(; map=training_map(), max_vel=10.0, trajector
 
         # stay within lane polynomials
 
-        pos = states[k][1:2]
+        # pos = states[k][1:2]
 
-        append!(constraints_val, pos[2] - lowerLane(pos[1]))
-        append!(constraints_lb, 0)
-        append!(constraints_ub, Inf) 
+        # append!(constraints_val, pos[2] - lowerLane(pos[1]))
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, Inf)
 
-        append!(constraints_val, upperLane(pos[1]) - pos[2])
-        append!(constraints_lb, 0)
-        append!(constraints_ub, Inf) 
+        # append!(constraints_val, upperLane(pos[1]) - pos[2])
+        # append!(constraints_lb, 0)
+        # append!(constraints_ub, Inf) 
 
-        @info "controls $(controls[k][1])"
+        # @info "controls $(controls[k][1])"
         
         append!(constraints_val, controls[k][1])
-        append!(constraints_lb, 2.0)
+        append!(constraints_lb, -5.0)
         append!(constraints_ub, 5.0) # max velo
 
         append!(constraints_val, controls[k][2])
-        append!(constraints_lb, 0)
-        append!(constraints_ub, 0.5) # max steering angle
+        append!(constraints_lb, -1)
+        append!(constraints_ub, 1) # max steering angle
     end
 
     constraints_jac = Symbolics.sparsejacobian(constraints_val, Z)
@@ -235,9 +224,9 @@ Return states = [X[1], X[2],..., X[K]], controls = [U[1],...,U[K]]
 where K = trajectory_length
 """
 function decompose_trajectory(z)
-    K = Int(length(z) / 7)
+    K = Int(length(z) / 6)
     controls = [@view(z[(k-1)*2+1:k*2]) for k = 1:K]
-    states = [@view(z[2K+(k-1)*5+1:2K+k*5]) for k = 1:K]
+    states = [@view(z[2K+(k-1)*4+1:2K+k*4]) for k = 1:K]
     return states, controls
 end
 
@@ -253,18 +242,12 @@ Uses a slightly different vehicle model than presented in class for technical re
 """
 function evolve_state(X, U, Δ)
 
-    # X is state [x, y, yaw, velocity, angular velocity, segment]
-    # U is controls [target velocity, target steering angle]
+    # X is state [x, y, velocity, angle]
+    # U is controls [acceleration, angular velo/yaw rate]
 
-    # for now assume instant changing
-
-    @info "X is $X and U is $U"
-
-    V = U[1] 
-    θ = X[3] + U[2] * Δ
-    next = X + Δ * [V*cos(θ), V*sin(θ), U[2] * Δ, U[1], U[2]]
-
-    next
+    V = X[3] + Δ * U[1] 
+    θ = X[4] + Δ * U[2]
+    X + Δ * [V*cos(θ), V*sin(θ), U[1], U[2]]
 end
 
 """
@@ -275,11 +258,11 @@ function stage_cost(X, U)
 
     # for now, higher velocity is better
 
-    return -U[1]
+    return -2 * U[1]^2 + 0.1 * U[2]^2 - X[3]
 end
 
 # Don't call this function until we know where we are
-function generate_trajectory(starting_state, callbacks; trajectory_length = 2)
+function generate_trajectory(starting_state, callbacks; trajectory_length=8)
     X1 = starting_state
     # X2 = V2.state
     # X3 = V3.state
@@ -325,8 +308,9 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 2)
         nothing
     end
 
-    n = trajectory_length*7
+    n = trajectory_length*6
     m = length(callbacks.constraints_lb)
+
     prob = Ipopt.CreateIpoptProblem(
         n,
         fill(-Inf, n),
@@ -350,7 +334,7 @@ function generate_trajectory(starting_state, callbacks; trajectory_length = 2)
 
     @info "Solving with IPOPT"
 
-    Ipopt.AddIpoptIntOption(prob, "print_level", 12)
+    Ipopt.AddIpoptIntOption(prob, "print_level", 4)
 
     status = Ipopt.IpoptSolve(prob)
 
