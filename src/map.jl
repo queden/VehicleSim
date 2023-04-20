@@ -53,6 +53,10 @@ mutable struct RoadSegment
     children::Vector{Int}
 end
 
+function get_segments(map::Dict{Int, RoadSegment}, point::SVector{3, Float64})
+    return get_segments(map, point)
+end
+
 """
 Get the segments that point is in 
 """
@@ -70,9 +74,47 @@ function get_segments(map::Dict{Int, RoadSegment}, point::SVector{3, Float64})
 end
 
 """
+Check if point is in the segment with seg id
+"""
+function inside_segment(map::Dict{Int, RoadSegment}, point, seg_id)
+
+    @info "Checking inside seg for id $seg_id"
+
+    if !haskey(map, seg_id)
+        @info "No key for $seg_id"
+        return false
+    end
+
+    seg = map[seg_id]
+
+    return inside_segment(SVector(point[1], point[2], 0), seg)
+
+end
+
+"""
+Check if point is in the segment with seg id
+"""
+function inside_segment_or_child(map::Dict{Int, RoadSegment}, point, seg_id::Integer)
+
+    seg = map[seg_id]
+
+    if inside_segment(SVector(point[1], point[2], 0), seg)
+        return true
+    end
+
+    for child in seg.children
+        if inside_segment(map, point, child)
+            return true
+        end
+    end
+
+    false
+end
+
+"""
 Check if point is in the segment RoadSegment
 """
-function inside_segment(point::SVector{3, Float64}, seg::RoadSegment; lane_width=10.0)
+function inside_segment(point, seg::RoadSegment; lane_width=10.0)
 
     # check if straight segment
     if isapprox(seg.lane_boundaries[1].curvature, 0.0; atol=1e-6) 
@@ -536,8 +578,6 @@ function training_map(; lane_width = 10.0,
     segs_I = add_fourway_intersection!(all_segs, nothing, nothing; intersection_curvature, speed_limit, lane_width)
     segs = add_straight_segments!(all_segs, segs_I, west; length=block_length, speed_limit, stop_outbound=true, stop_inbound=true)
     segs_T = add_T_intersection!(all_segs, segs, west, east; intersection_curvature, lane_width, speed_limit)
-   
-   
    
     segs_S = add_pullout_segments!(all_segs, segs_T, south; length=block_length, pullout_length, pullout_taper, lane_width, speed_limit, pullout_inbound=false, pullout_outbound=true)
     segs_S = add_curved_segments!(all_segs, segs_S, south, true; turn_curvature, speed_limit, lane_width)

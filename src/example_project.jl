@@ -79,33 +79,30 @@ function decision_making(localization_state_channel,
 
         sleep(1.0)
 
-            latest_gt = fetch(gt_channel)
+        latest_gt = fetch(gt_channel)
         
-            pos = latest_gt.position
+        pos = latest_gt.position
 
-            @info "Position is $pos"
+        @info "Position is $pos"
 
-            seg = get_segments(map, pos)
+        seg = get_segments(map, pos)
 
-            angle = latest_gt.orientation
-            yaw = QuaternionToYaw(angle)
+        angle = latest_gt.orientation
+        yaw = QuaternionToYaw(angle)
 
-            #trajectory = generate_trajectory(ego, V2, V3, track_radius, lane_width, track_center, callbacks, traj_length, timestep)
+        #trajectory = generate_trajectory(ego, V2, V3, track_radius, lane_width, track_center, callbacks, traj_length, timestep)
 
-            velo = latest_gt.velocity
+        velo = latest_gt.velocity
 
-            @info "Velocity is type $(typeof(velo)) and value $velo"
+        @info "Velocity is type $(typeof(velo)) and value $velo"
 
-            # TODO: velo[1] is totally wrong 
-            state = [pos[1], pos[2], velo[1], yaw]
+        # TODO: velo[1] is totally wrong 
+        state = [pos[1], pos[2], velo[1], yaw]
 
-            @info "Generating trajectory"
+        @info "Generating trajectory"
 
-            trajectory = generate_trajectory(state, callbacks)
+        trajectory = generate_trajectory(state, callbacks)
 
-     
-
-    
         # if seg.id != target_road_segment_id
         #     # we are not on the target segment, so we need to navigate to it
         #     # this is a simple example, so we will just go to the center of the segment
@@ -120,7 +117,6 @@ function decision_making(localization_state_channel,
         # we are on the target segment, so we need to navigate to the next segment
         # this is a simple example, so we will just go to the center of the segment
         # and then we will be on the target segment
-
 
         # latest_perception_state = fetch(perception_state_channel)
 
