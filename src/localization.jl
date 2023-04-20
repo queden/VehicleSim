@@ -45,7 +45,7 @@ function gps_model(particle::Particle, gps_meas; sqrt_meas_cov = Diagonal([1.0, 
     pred_meas = xyz_gps[1:2]
 
     # Generate actual measurement and update particle weight
-    particle_likelihood = likelihood(pred_meas, gps_meas, sqrt_meas_cov)
+    particle_likelihood = gps_likelihood(pred_meas, gps_meas, sqrt_meas_cov)
     particle.weight *= particle_likelihood
 end
 
@@ -70,9 +70,12 @@ function imu_model(particle::Particle, imu_meas; sqrt_meas_cov = Diagonal([0.01,
     particle.weight *= likelihood
 end
 
-function likelihood(predicted_meas, actual_meas, noise_cov)
+function gps_likelihood(predicted_meas, actual_meas, noise_cov)
     # Compute the likelihood of the actual measurement given the predicted measurement and the measurement noise covariance matrix
-    likelihood = pdf(MvNormal(predicted_meas, noise_cov), actual_meas)
+    likelihood = 1.0
+    lat_likelihood = pdf(Distributions.Normal(predicted_meas[1], sqrt(noise_cov[1,1])), actual_meas.lat)
+    long_likelihood = pdf(Distributions.Normal(predicted_meas[2], sqrt(noise_cov[2,2])), actual_meas.long)
+    likelihood *= lat_likelihood * long_likelihood
     return likelihood
 end
 
@@ -81,7 +84,7 @@ function resample(particles)
     weights = [particle.weight for particle in particles]
     new_particles = Particle[]
     for i in 1:num_particles
-        idx = sample(1:num_particles, Weights(weights))
+        idx = Distributions.sample(1:num_particles, Weights(weights))
         push!(new_particles, deepcopy(particles[idx]))
         new_particles[i].weight = 1.0 / num_particles
     end
@@ -91,24 +94,24 @@ end
 function compute_state_estimate(particles::Vector{Particle})
     # Compute weighted average of particle states
     pos_mean = zeros(3)
-    quat_mean = Quaternion.quaternion(0.0, 0.0, 0.0, 0.0)
+    quat_mean = Quaternion(SVector{4, Float64}(1.0, 0.0, 0.0, 0.0))
     vel_mean = zeros(3)
     angvel_mean = zeros(3)
     weight_sum = 0.0
     for particle in particles
         pos_mean += particle.weight * particle.Position
-        quat_mean += particle.weight * particle.Quaternion
+        # quat_mean += particle.weight * [particles.Quaternion[1], particles.Quaternion[2:4]]
         vel_mean += particle.weight * particle.Velocity
         angvel_mean += particle.weight * particle.AngularVelocity
         weight_sum += particle.weight
     end
     pos_mean /= weight_sum
-    quat_mean /= weight_sum
+    # quat_mean /= weight_sum
     vel_mean /= weight_sum
     angvel_mean /= weight_sum
 
     # Normalize quaternion mean
-    quat_mean = normalize(quat_mean)
+    # quat_mean = normalize(quat_mean)
 
     # Create state estimate
     state_estimate = Particle(pos_mean, quat_mean, vel_mean, angvel_mean, 1.0)
@@ -171,6 +174,7 @@ function localization(gps_channel::Channel{GPSMeasurement}, imu_channel::Channel
         # if both channels are ready, default to GPS measurement
         if isready(gps_channel) && isready(imu_channel) 
             fresh_gps_meas = take!(gps_channel)
+            println("fresh gps measurement" , fresh_gps_meas.lat, " ", fresh_gps_meas.long)
             # flush_channel(gps_channel)
             Δt = fresh_gps_meas.time - t # needs to be latest time
             t = fresh_gps_meas.time
@@ -189,6 +193,7 @@ function localization(gps_channel::Channel{GPSMeasurement}, imu_channel::Channel
 
         elseif isready(imu_channel)
             fresh_imu_meas = take!(imu_channel)
+            println("fresh imu measurement", fresh_imu_meas.linear_vel, " ", fresh_imu_meas.angular_vel)
             # flush_channel(imu_channel)
             Δt = fresh_imu_meas.time - t # needs to be latest time
             t = fresh_imu_meas.time
