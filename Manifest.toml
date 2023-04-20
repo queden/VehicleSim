@@ -2,11 +2,7 @@
 
 julia_version = "1.8.5"
 manifest_format = "2.0"
-<<<<<<< HEAD
 project_hash = "ea61d7c8b88269232acc7017103d5ec6046d4d8d"
-=======
-project_hash = "ab49090d7dee3ad7eb6fbaf6e6af0084766e561a"
->>>>>>> a0c4848fc275826ca65cfa8e125125b306347775
 
 [[deps.ASL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1008,19 +1004,11 @@ git-tree-sha1 = "9696a80c21a56b937e3fd89e972f8db5db3186e2"
 uuid = "bdcacae8-1622-11e9-2a5c-532679323890"
 version = "0.12.150"
 
-<<<<<<< HEAD
 [[deps.LsqFit]]
 deps = ["Distributions", "ForwardDiff", "LinearAlgebra", "NLSolversBase", "OptimBase", "Random", "StatsBase"]
 git-tree-sha1 = "00f475f85c50584b12268675072663dfed5594b2"
 uuid = "2fda8390-95c7-5789-9bda-21331edee243"
 version = "0.13.0"
-=======
-[[deps.LoweredCodeUtils]]
-deps = ["JuliaInterpreter"]
-git-tree-sha1 = "60168780555f3e663c536500aa790b6368adc02a"
-uuid = "6f1432cf-f94c-5a45-995e-cdbf5db27b0b"
-version = "2.3.0"
->>>>>>> a0c4848fc275826ca65cfa8e125125b306347775
 
 [[deps.METIS_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
